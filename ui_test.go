@@ -342,20 +342,58 @@ func TestBlockStrangerInTimelineAndTabSwitch(t *testing.T) {
 
 func TestListWindowFollowsCursor(t *testing.T) {
 	m, _ := followingModel(t)
-	m.height = 12 // avail 6 -> 3 rows
+	m.height = 16 // avail 10 lines
 	m.items = nil
 	for i := 0; i < 20; i++ {
 		m.items = append(m.items, FeedItem{Author: Profile{DID: fmt.Sprint(i), Handle: fmt.Sprintf("u%d.bsky.social", i)},
-			Post: Post{Text: fmt.Sprintf("p%d", i)}})
+			Post: Post{Text: strings.Repeat(fmt.Sprintf("words%d ", i), 30)}})
 	}
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 12; i++ {
 		m = press(m, "down")
+		v := m.View()
+		if !strings.Contains(v, fmt.Sprintf("u%d.bsky.social", m.cur)) {
+			t.Fatalf("cursor %d not visible:\n%s", m.cur, v)
+		}
+		if got := strings.Count(v, "\n"); got > m.height {
+			t.Fatalf("view is %d lines, window is %d", got, m.height)
+		}
 	}
-	if m.cur != 10 || m.cur < m.listTop || m.cur >= m.listTop+3 {
-		t.Errorf("cursor %d outside window [%d,%d)", m.cur, m.listTop, m.listTop+3)
+	m = press(m, "up")
+	if m.cur != 11 {
+		t.Errorf("cur = %d", m.cur)
 	}
-	if v := m.View(); !strings.Contains(v, "u10.bsky.social") {
-		t.Error("selected row not visible")
+}
+
+func TestListShowsUpToThreeLinesOfEachPost(t *testing.T) {
+	m, _ := followingModel(t)
+	m.width = 80
+	long := strings.TrimSpace(strings.Repeat("alpha beta gamma delta ", 30))
+	m.items = []FeedItem{
+		{Author: Profile{DID: "1", Handle: "long.bsky.social"}, Post: Post{Text: long}},
+		{Author: Profile{DID: "2", Handle: "short.bsky.social"}, Post: Post{Text: "just one line"}},
+		{Author: Profile{DID: "3", Handle: "img.bsky.social"}, Post: Post{Attach: []string{"[1 image] alt: a cat"}}},
+	}
+	m.items = append(m.items, FeedItem{Author: Profile{DID: "4", Handle: "quote.bsky.social"},
+		Post: Post{Text: "look", Quote: "@q.bsky.social: first line\n\nsecond line\n\nthird"}})
+	if got := len(m.itemLines(3, m.listWidth())); got != 3 {
+		t.Errorf("a quote with line breaks should still preview as one paragraph, got %d lines", got)
+	}
+	lines := m.itemLines(0, m.listWidth())
+	if len(lines) != 1+previewLines+1 { // header, 3 text lines, separator
+		t.Fatalf("long post uses %d lines, want %d:\n%s", len(lines), 1+previewLines+1, strings.Join(lines, "\n"))
+	}
+	if last := lines[previewLines]; !strings.HasSuffix(strings.TrimSpace(last), "…") {
+		t.Errorf("clipped preview should end in an ellipsis: %q", last)
+	}
+	if got := len(m.itemLines(1, m.listWidth())); got != 3 {
+		t.Errorf("one-line post uses %d lines, want 3 (header, text, separator)", got)
+	}
+	v := m.View()
+	if strings.Count(v, "alpha") < 3*2 { // at least three full lines of text
+		t.Errorf("expected three lines of preview text:\n%s", v)
+	}
+	if !strings.Contains(v, "[1 image] alt: a cat") {
+		t.Error("attachments should show in the preview of a text-less post")
 	}
 }
 

@@ -478,7 +478,7 @@ func (m model) browseKey(key, confirm string) (model, tea.Cmd) {
 		m.scroll, m.status, m.err = 0, "", nil
 		m = m.ensureVisible()
 	}
-	rows := max(m.avail()/2, 1)
+	rows := max(m.avail()/(previewLines+2), 1)
 	switch key {
 	case "up":
 		setCur(m.cur - 1)
@@ -676,14 +676,23 @@ func (m model) clampScroll(s int) int {
 	return min(max(s, 0), max(len(m.rightLines())-m.rightAvail(), 0))
 }
 
-// ensureVisible keeps the timeline cursor inside the visible list window.
+// ensureVisible scrolls the timeline list so the selected item is fully on screen.
 func (m model) ensureVisible() model {
-	rows := max(m.avail()/2, 1)
-	if m.cur < m.listTop {
-		m.listTop = m.cur
+	if len(m.items) == 0 {
+		return m
 	}
-	if m.cur >= m.listTop+rows {
-		m.listTop = m.cur - rows + 1
+	m.cur = min(max(m.cur, 0), len(m.items)-1)
+	m.listTop = min(m.listTop, m.cur)
+	w := m.listWidth()
+	for m.listTop < m.cur {
+		h := 0
+		for i := m.listTop; i <= m.cur; i++ {
+			h += len(m.itemLines(i, w))
+		}
+		if h <= m.avail() {
+			break
+		}
+		m.listTop++
 	}
 	m.listTop = max(m.listTop, 0)
 	return m
@@ -927,65 +936,96 @@ func truncateWidth(s string, w int) string {
 	return b.String() + "…"
 }
 
-func snippet(p Post) string {
-	text := strings.Join(strings.Fields(p.Text), " ")
-	if text == "" {
-		text = strings.TrimSpace(strings.Join(append(append([]string{}, p.Attach...), p.Quote), " "))
+// previewLines is how many lines of each post the timeline list shows.
+const previewLines = 3
+
+// preview is the text shown for a post in the list: its text, then any
+// attachments and quoted post, so image-only posts still say something.
+func preview(p Post) string {
+	parts := []string{strings.Join(strings.Fields(p.Text), " ")}
+	parts = append(parts, p.Attach...)
+	if p.Quote != "" {
+		parts = append(parts, "▎ "+p.Quote)
 	}
+	text := strings.Join(strings.Fields(strings.Join(parts, " ")), " ") // one paragraph, no stray line breaks
 	if text == "" {
 		text = "(no text)"
 	}
 	return text
 }
 
-func (m model) listView() string {
-	w := min(max(m.width-2, 40), 140)
+func (m model) listWidth() int {
 	if m.width <= 0 {
-		w = 110
+		return 110
 	}
-	rows := max(m.avail()/2, 1)
+	return min(max(m.width-2, 40), 140)
+}
+
+// itemLines renders timeline item i: a header line, up to previewLines lines of
+// text (ending in … if there is more), and a blank separator line.
+func (m model) itemLines(i, w int) []string {
+	it := m.items[i]
+	age := "?"
+	if t, err := time.Parse(time.RFC3339, it.Post.CreatedAt); err == nil {
+		age = humanAge(time.Since(t))
+	}
+	name := it.Author.DisplayName
+	if name == "" {
+		name = it.Author.Handle
+	}
+	who := fmt.Sprintf("%s (@%s)", name, it.Author.Handle)
+	var tagsPlain, tags []string
+	add := func(plain string, st lipgloss.Style) {
+		tagsPlain = append(tagsPlain, plain)
+		tags = append(tags, st.Render(plain))
+	}
+	if it.By != "" {
+		add("↻ @"+it.By, accentStyle)
+	}
+	if it.Post.Reply {
+		add("reply", dimStyle)
+	}
+	switch m.a.st.Entries[it.Author.DID].Decision {
+	case decBlocked:
+		add("blocked", errStyle)
+	case decKept:
+		add("kept", okStyle)
+	}
+	tailPlain, tail := strings.Join(tagsPlain, " "), strings.Join(tags, " ")
+	who = truncateWidth(who, max(w-(2+5+1+1+lipgloss.Width(tailPlain)), 10))
+
+	// plain, hard-wrapped preview text (links are not needed in the list)
+	body := strings.Split(oscRe.ReplaceAllString(strings.Join(wrapText(preview(it.Post), w-6), "\n"), ""), "\n")
+	if len(body) > previewLines {
+		body = body[:previewLines]
+		body[previewLines-1] = truncateWidth(body[previewLines-1]+" …", w-6)
+	}
+
+	var lines []string
+	if i == m.cur {
+		lines = append(lines, selStyle.Width(w).Render(fmt.Sprintf("▸ %-5s %s %s", age, who, tailPlain)))
+		for _, l := range body {
+			lines = append(lines, selStyle.Width(w).Render("      "+l))
+		}
+	} else {
+		lines = append(lines, fmt.Sprintf("  %s %s %s", dimStyle.Render(fmt.Sprintf("%-5s", age)), titleStyle.Render(who), tail))
+		for _, l := range body {
+			lines = append(lines, "      "+dimStyle.Render(l))
+		}
+	}
+	return append(lines, "")
+}
+
+func (m model) listView() string {
+	w, used := m.listWidth(), 0
 	var b strings.Builder
-	for i := m.listTop; i < min(m.listTop+rows, len(m.items)); i++ {
-		it := m.items[i]
-		age := "?"
-		if t, err := time.Parse(time.RFC3339, it.Post.CreatedAt); err == nil {
-			age = humanAge(time.Since(t))
+	for i := m.listTop; i < len(m.items); i++ {
+		lines := m.itemLines(i, w)
+		if used > 0 && used+len(lines) > m.avail() {
+			break
 		}
-		name := it.Author.DisplayName
-		if name == "" {
-			name = it.Author.Handle
-		}
-		who := fmt.Sprintf("%s (@%s)", name, it.Author.Handle)
-		var tagsPlain, tags []string
-		add := func(plain string, st lipgloss.Style) {
-			tagsPlain = append(tagsPlain, plain)
-			tags = append(tags, st.Render(plain))
-		}
-		if it.By != "" {
-			add("↻ @"+it.By, accentStyle)
-		}
-		if it.Post.Reply {
-			add("reply", dimStyle)
-		}
-		switch m.a.st.Entries[it.Author.DID].Decision {
-		case decBlocked:
-			add("blocked", errStyle)
-		case decKept:
-			add("kept", okStyle)
-		}
-		tailPlain, tail := strings.Join(tagsPlain, " "), strings.Join(tags, " ")
-		fixed := 2 + 5 + 1 + 1 + lipgloss.Width(tailPlain) // marker, age column, spaces
-		who = truncateWidth(who, max(w-fixed, 10))
-		snip := truncateWidth(snippet(it.Post), w-6)
-		var l1, l2 string
-		if i == m.cur {
-			l1 = selStyle.Width(w).Render(fmt.Sprintf("▸ %-5s %s %s", age, who, tailPlain))
-			l2 = selStyle.Width(w).Render("      " + snip)
-		} else {
-			l1 = fmt.Sprintf("  %s %s %s", dimStyle.Render(fmt.Sprintf("%-5s", age)), titleStyle.Render(who), tail)
-			l2 = "      " + dimStyle.Render(snip)
-		}
-		b.WriteString(l1 + "\n" + l2 + "\n")
+		b.WriteString(strings.Join(lines, "\n") + "\n")
+		used += len(lines)
 	}
 	return b.String()
 }
