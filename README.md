@@ -158,9 +158,20 @@ tracked locally.
 ```sh
 make help     # list targets
 make test
+make smoke   # live, read-only CLI check against your account (see below)
 make run ARGS="--since 10"
 ```
 
 Talks to the AT Protocol XRPC API directly over `net/http` (no SDK):
 `createSession`, `getFollowers`, `getProfile(s)`, `getAuthorFeed`, and
 `createRecord`/`deleteRecord` for `app.bsky.graph.block`.
+
+### Smoke test
+
+`./smoke.sh` (or `make smoke`) runs the real CLI against your real account to check
+that login, listing, `show`, the feed, local state and the audit log all work. It
+**does not change your account**: `block` and `unblock` only ever run with
+`--dry-run` (the script's wrapper aborts if anything else is attempted), the
+interactive TUI is never started, and all local files go to a temp directory that is
+removed afterwards. It needs `BSKY_HANDLE` and `BSKY_APP_PASSWORD` and takes a few
+seconds.

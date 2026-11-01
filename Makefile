@@ -1,6 +1,6 @@
 BIN := bskyban
 
-.PHONY: all build run test vet fmt tidy install clean help
+.PHONY: all build run test smoke vet fmt tidy install clean help
 
 all: fmt vet build ## format, vet, build
 
@@ -12,6 +12,9 @@ run: build ## launch the TUI (ARGS="--since 10")
 
 test: ## run tests
 	go test ./...
+
+smoke: ## live read-only CLI check against your account (needs BSKY_HANDLE/BSKY_APP_PASSWORD)
+	./smoke.sh
 
 vet: ## go vet
 	go vet ./...
