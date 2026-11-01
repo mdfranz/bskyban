@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -355,5 +356,55 @@ func TestListWindowFollowsCursor(t *testing.T) {
 	}
 	if v := m.View(); !strings.Contains(v, "u10.bsky.social") {
 		t.Error("selected row not visible")
+	}
+}
+
+func TestStackedLayoutFitsTheWindow(t *testing.T) {
+	m, _ := candidates(t)
+	m.width, m.height = 80, 30
+	p := m.list[0]
+	p.Description = strings.Repeat("A long bio sentence. ", 8)
+	m.list[0] = p
+	m.profiles[p.DID] = &p
+	var posts []Post
+	for i := 0; i < 8; i++ {
+		posts = append(posts, Post{Text: strings.Repeat("some post text ", 6), CreatedAt: "2026-11-01T06:00:00Z"})
+	}
+	m.posts[p.DID] = &posts
+	if _, _, stacked := m.panelWidths(); !stacked {
+		t.Fatal("80 columns should stack")
+	}
+	for step := 0; step < 4; step++ {
+		lines := strings.Count(m.View(), "\n")
+		if lines > m.height {
+			t.Fatalf("scroll step %d: view is %d lines, window is %d", step, lines, m.height)
+		}
+		m = press(m, "pgdown")
+	}
+	if m.scroll == 0 {
+		t.Error("expected to scroll")
+	}
+}
+
+func TestHumanAgeShowsMinutes(t *testing.T) {
+	for d, want := range map[time.Duration]string{5 * time.Minute: "5m", 90 * time.Minute: "1h", 30 * time.Hour: "30h"} {
+		if got := humanAge(d); got != want {
+			t.Errorf("humanAge(%v) = %q, want %q", d, got, want)
+		}
+	}
+}
+
+func TestHintFitsNarrowTerminals(t *testing.T) {
+	m, _ := followingModel(t)
+	m.inPost = true
+	for _, w := range []int{60, 80, 100, 140} {
+		m.width = w
+		if hw := lipgloss.Width(m.hint()); hw > w {
+			t.Errorf("width %d: hint is %d wide: %q", w, hw, m.hint())
+		}
+	}
+	m.width = 80
+	if h := m.hint(); !strings.Contains(h, "q quit") || !strings.Contains(h, "tab switch") {
+		t.Errorf("80 columns should still show tab and quit: %q", h)
 	}
 }

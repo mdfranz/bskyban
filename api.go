@@ -414,6 +414,7 @@ func (c *Client) GetTimeline(ctx context.Context, cursor string, limit int) ([]F
 		it := FeedItem{Post: e.toPost(), Author: e.Post.Author}
 		if e.isRepost() {
 			it.By = e.Reason.By.Handle
+			it.Post.Repost = false // this is the original post; By says who reposted it
 		}
 		items = append(items, it)
 	}

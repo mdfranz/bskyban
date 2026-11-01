@@ -400,6 +400,8 @@ func humanAge(d time.Duration) string {
 	switch {
 	case d <= 0:
 		return "?"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
 	case d < 48*time.Hour:
 		return fmt.Sprintf("%dh", int(d.Hours()))
 	case d < 90*24*time.Hour:

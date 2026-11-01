@@ -415,7 +415,7 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // scrollKeys handles ↑/↓/PgUp/PgDn for the right panel.
 func (m model) scrollKeys(key string) (model, bool) {
-	page := max(m.avail()-2, 1)
+	page := max(m.rightAvail()-2, 1)
 	switch key {
 	case "up":
 		m.scroll--
@@ -662,8 +662,18 @@ func (m model) rightLines() []string {
 	return nil
 }
 
+// rightAvail is the height of the scrollable posts area. When the panels are
+// stacked it is what remains below the profile.
+func (m model) rightAvail() int {
+	lw, _, stacked := m.panelWidths()
+	if !stacked {
+		return m.avail()
+	}
+	return max(m.avail()-len(m.profilePanel(lw, ""))-1, 3)
+}
+
 func (m model) clampScroll(s int) int {
-	return min(max(s, 0), max(len(m.rightLines())-m.avail(), 0))
+	return min(max(s, 0), max(len(m.rightLines())-m.rightAvail(), 0))
 }
 
 // ensureVisible keeps the timeline cursor inside the visible list window.
@@ -802,7 +812,7 @@ func joinColumns(left, right []string, leftW int) string {
 func (m model) panelsView(pos string) string {
 	lw, _, stacked := m.panelWidths()
 	left := m.profilePanel(lw, pos)
-	right := window(m.rightLines(), m.scroll, m.avail())
+	right := window(m.rightLines(), m.scroll, m.rightAvail())
 	if stacked {
 		return strings.Join(append(append(left, ""), right...), "\n") + "\n"
 	}
@@ -831,23 +841,27 @@ func (m model) tabBar() string {
 }
 
 func (m model) hint() string {
-	var h string
+	var items []string
 	switch {
 	case m.active() == tabCandidates:
-		h = "← → move · ↑ ↓ scroll · b block · k keep · s skip · u undo"
+		items = []string{"← → move", "↑ ↓ scroll", "b block", "k keep", "s skip", "u undo"}
 	case m.inPost:
-		h = "← → prev/next · ↑ ↓ scroll · esc back · b block · k keep · u undo"
+		items = []string{"← → prev/next", "↑ ↓ scroll", "esc back", "b block", "k keep", "u undo"}
 	default:
-		h = "↑ ↓ move · enter open · b block · k keep · u undo"
+		items = []string{"↑ ↓ move", "enter open", "b block", "k keep", "u undo"}
 	}
 	if len(m.tabs) > 1 {
-		h += " · tab switch"
+		items = append(items, "tab switch")
 	}
-	h += " · q quit"
-	if n := len(m.rightLines()); n > m.avail() {
-		h += fmt.Sprintf("   [%d%%]", (min(m.scroll, n-m.avail())*100)/max(n-m.avail(), 1))
+	items = append(items, "q quit")
+	if n, av := len(m.rightLines()), m.rightAvail(); n > av {
+		items = append(items, fmt.Sprintf("[%d%%]", (min(m.scroll, n-av)*100)/max(n-av, 1)))
 	}
-	return h
+	h := strings.Join(items, " · ")
+	if m.width > 0 && lipgloss.Width(h) > m.width {
+		h = strings.Join(items, "  ") // tighter on narrow terminals
+	}
+	return truncateWidth(h, max(m.width, 20))
 }
 
 func (m model) View() string {
