@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,6 +41,13 @@ type (
 	followingMsg struct {
 		items  []FeedItem
 		cursor string
+		err    error
+	}
+	refreshTickMsg struct{}
+	newItemsMsg    struct {
+		items  []FeedItem // newest first, none of them already shown or pending
+		gap    bool       // more new posts than one check looks at
+		manual bool
 		err    error
 	}
 	profileMsg struct {
@@ -93,6 +101,13 @@ type model struct {
 	tlCursor      string
 	followLoading bool
 	moreBusy      bool
+	newPosts      []FeedItem    // new posts found by a check, not yet inserted into the list
+	newGap        bool          // ...and there were more than a check could fetch
+	checking      bool          // a check for new posts is in flight
+	applyWhenDone bool          // R was pressed during a check: insert its result when it lands
+	refreshErr    error         // last background check failed
+	refresh       time.Duration // how often to check for new posts; 0 = never
+	backlog       bool          // include skipped accounts when adding repost authors
 
 	busy     bool
 	quitting bool    // wait for the active action to be saved and audited
@@ -152,9 +167,130 @@ func (m model) Init() tea.Cmd {
 		return loadedMsg{l, ctxs, err}
 	}}
 	if m.timeline != nil {
-		cmds = append(cmds, loadTimeline(m.timeline, ""))
+		cmds = append(cmds, loadTimeline(m.timeline, ""), m.nextTick())
 	}
 	return tea.Batch(cmds...)
+}
+
+// nextTick schedules the next background check for new posts (nil if disabled).
+func (m model) nextTick() tea.Cmd {
+	if m.refresh <= 0 {
+		return nil
+	}
+	return tea.Tick(m.refresh, func(time.Time) tea.Msg { return refreshTickMsg{} })
+}
+
+// checkPages bounds how far back one check looks for the overlap with what is shown.
+const checkPages = 4
+
+// startCheck fetches the newest timeline pages and finds the posts you do not have yet.
+// It only reads; nothing is inserted until the result arrives (and, for the
+// background check, until you press R).
+func (m model) startCheck(manual bool) (model, tea.Cmd) {
+	if m.timeline == nil {
+		return m, nil
+	}
+	if m.followLoading {
+		if manual {
+			m.status = "still loading the timeline"
+		}
+		return m, nil
+	}
+	if m.checking {
+		if manual { // a check is already running: show its result as soon as it lands
+			m.applyWhenDone = true
+			m.status = "checking for new posts…"
+		}
+		return m, nil
+	}
+	known := make(map[string]bool, len(m.items)+len(m.newPosts))
+	for _, it := range m.items {
+		known[it.key()] = true
+	}
+	for _, it := range m.newPosts {
+		known[it.key()] = true
+	}
+	m.checking = true
+	if manual {
+		m.status = "checking for new posts…"
+	}
+	tl := m.timeline
+	return m, func() tea.Msg {
+		ctx := context.Background()
+		var fresh []FeedItem
+		got := map[string]bool{}
+		cursor := ""
+		for page := 0; page < checkPages; page++ {
+			items, next, err := tl(ctx, cursor)
+			if err != nil {
+				return newItemsMsg{err: err, manual: manual}
+			}
+			overlap := false
+			for _, it := range items {
+				switch k := it.key(); {
+				case known[k]:
+					overlap = true
+				case !got[k]:
+					got[k] = true
+					fresh = append(fresh, it)
+				}
+			}
+			if overlap || next == "" {
+				return newItemsMsg{items: fresh, manual: manual}
+			}
+			cursor = next
+		}
+		return newItemsMsg{items: fresh, gap: true, manual: manual}
+	}
+}
+
+// applyPending inserts the held-back posts at the top of the list. The post you
+// are on stays selected, unless you are at the very top of the list, where the
+// newest post becomes the selection.
+func (m model) applyPending() model {
+	n := len(m.newPosts)
+	if n == 0 {
+		m.status = "no new posts"
+		return m
+	}
+	atTop := m.cur == 0 && m.listTop == 0 && !m.inPost
+	m.items = append(append([]FeedItem{}, m.newPosts...), m.items...)
+	if !atTop {
+		m.cur += n
+		m.listTop += n
+	}
+	m.status = fmt.Sprintf("%d new posts", n)
+	if n == 1 {
+		m.status = "1 new post"
+	}
+	if m.newGap {
+		m.status += " (more arrived than could be fetched; the newest are shown)"
+	}
+	m.newPosts, m.newGap = nil, false
+	return m.ensureVisible()
+}
+
+// mergeCandidates adds authors of newly reposted posts to the Reposts queue
+// (at the end, so the account you are reviewing does not move).
+func (m model) mergeCandidates(items []FeedItem) model {
+	if m.loading || m.ctxs == nil {
+		return m
+	}
+	for _, it := range items {
+		if it.By == "" || !m.a.isNew(it.Author, m.backlog) {
+			continue
+		}
+		rc, seen := m.ctxs[it.Author.DID]
+		if !seen {
+			m.list = append(m.list, it.Author)
+			rc.Post = it.Post
+		}
+		if !slices.Contains(rc.By, it.By) {
+			rc.By = append(rc.By, it.By)
+		}
+		m.ctxs[it.Author.DID] = rc
+	}
+	return m
 }
 
 func loadTimeline(tl timelineFunc, cursor string) tea.Cmd {
@@ -239,6 +375,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.list, m.ctxs = msg.list, msg.ctxs
 		return m, m.prefetch()
+	case refreshTickMsg:
+		next, check := m.startCheck(false)
+		return next, tea.Batch(m.nextTick(), check)
+	case newItemsMsg:
+		m.checking = false
+		manual := msg.manual || m.applyWhenDone
+		m.applyWhenDone = false
+		if msg.err != nil {
+			if manual {
+				m.err = fmt.Errorf("refresh: %w", msg.err)
+			} else {
+				m.refreshErr = msg.err
+			}
+			return m, nil
+		}
+		m.refreshErr = nil
+		m.newPosts = append(append([]FeedItem{}, msg.items...), m.newPosts...)
+		m.newGap = m.newGap || msg.gap
+		m = m.mergeCandidates(msg.items)
+		if manual {
+			m = m.applyPending()
+			return m, m.prefetch()
+		}
+		return m, nil
 	case followingMsg:
 		m.followLoading, m.moreBusy = false, false
 		if msg.err != nil {
@@ -445,6 +605,14 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.confirm = ""
 	if m.busy {
 		return m, nil
+	}
+	if key == "R" && m.timeline != nil {
+		if len(m.newPosts) > 0 {
+			m = m.applyPending() // what the header announced; no need to wait for or start a check
+			m.scroll = 0
+			return m, m.prefetch()
+		}
+		return m.startCheck(true)
 	}
 	if key == "tab" && len(m.tabs) > 1 {
 		m.tab = (m.tab + 1) % len(m.tabs)
@@ -915,6 +1083,9 @@ func (m model) tabBar() string {
 		label := m.candLabel
 		if t == tabFollowing {
 			label = "Following"
+			if n := len(m.newPosts); n > 0 {
+				label += fmt.Sprintf(" (+%d new)", n)
+			}
 		} else if !m.loading {
 			label = fmt.Sprintf("%s (%d)", label, len(m.list))
 		}
@@ -924,7 +1095,11 @@ func (m model) tabBar() string {
 			parts = append(parts, dimStyle.Render(label))
 		}
 	}
-	return strings.Join(parts, "   ") + m.scrollPos()
+	flag := ""
+	if m.refreshErr != nil {
+		flag = warnStyle.Render("   ⚠ refresh failed")
+	}
+	return strings.Join(parts, "   ") + flag + m.scrollPos()
 }
 
 // hintItems are the key hints for the current screen.
@@ -943,6 +1118,9 @@ func (m model) hintItems() []string {
 	}
 	if len(m.tabs) > 1 {
 		items = append(items, "tab switch")
+	}
+	if m.timeline != nil {
+		items = append(items, "R refresh")
 	}
 	return append(items, "q quit")
 }

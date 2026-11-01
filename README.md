@@ -94,6 +94,7 @@ further decisions and quitting wait until the save succeeds.
 ```sh
 bskyban feed                 # TUI with two tabs: Following and Reposts
 bskyban feed --pages 5       # scan more of the timeline for the Reposts tab (100 items/page, default 3)
+bskyban feed --refresh 1m    # check for new posts every minute (default 30s, 0 = off, minimum 10s)
 bskyban feed --list [--json] # print the Reposts candidates instead
 ```
 
@@ -114,6 +115,16 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 
 Blocking someone you follow asks you to press `b` a second time. More of the
 timeline loads as you near the end.
+
+**New posts.** Every `--refresh` interval (30s by default) it quietly checks for new
+posts. They are *not* inserted while you read: the header just shows
+`Following (+3 new)`, so the list never shifts under you. Press `R` to insert them at
+the top; the post you were on stays selected (from the very top of the list, the
+newest post is selected instead). `R` also refreshes right away if nothing is waiting.
+Newly reposted authors you haven't handled are added to the end of the Reposts queue
+(its count grows) without moving the account you're reviewing. A failed check shows
+`⚠ refresh failed` in the header and clears itself on the next good one. One check is
+one timeline request (up to 4 if more than a page of new posts arrived).
 
 **Reposts** reviews people you *don't* follow who reach you through someone you
 do: for each repost in your timeline it takes the original author, skipping

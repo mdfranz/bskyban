@@ -22,7 +22,7 @@ const usageText = `bskyban - review and block Bluesky followers
 
 Usage:
   bskyban [review] [--since N] [--backlog]   interactive TUI (new followers only)
-  bskyban feed [--pages N] [--backlog] [--list [--json]]
+  bskyban feed [--pages N] [--backlog] [--refresh 30s] [--list [--json]]
                                         review authors of reposts in your timeline
   bskyban list [--since N] [--backlog] [--all] [--json]
   bskyban log [--since 7d] [--action block] [--who handle] [-n 50] [--json]

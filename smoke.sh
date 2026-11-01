@@ -130,6 +130,8 @@ if [[ -n "$HANDLE" ]]; then
 fi
 
 section "feed"
+run feed --list --refresh 5s;  check "feed rejects a --refresh below 10s (exit 2)" test "$RC" -eq 2
+run feed --list --refresh 0;   check "feed accepts --refresh 0 (polling off)" test "$RC" -eq 0
 run feed --list --pages 1
 check "feed --list --pages 1 exits 0" test "$RC" -eq 0
 run feed --list --pages 1 --json

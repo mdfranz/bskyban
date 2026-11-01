@@ -413,7 +413,11 @@ type FeedItem struct {
 	Post   Post
 	Author Profile
 	By     string // handle of the reposter, empty for original posts
+	URI    string // the post's AT URI
 }
+
+// key identifies a timeline entry: the same post can appear once per reposter.
+func (it FeedItem) key() string { return it.URI + "|" + it.By }
 
 // GetTimeline returns one page of your home timeline (accounts you follow),
 // newest first, plus the cursor for the next page ("" when there is none).
@@ -428,7 +432,7 @@ func (c *Client) GetTimeline(ctx context.Context, cursor string, limit int) ([]F
 	}
 	items := make([]FeedItem, 0, len(entries))
 	for _, e := range entries {
-		it := FeedItem{Post: e.toPost(), Author: e.Post.Author}
+		it := FeedItem{Post: e.toPost(), Author: e.Post.Author, URI: e.Post.URI}
 		if e.isRepost() {
 			it.By = e.Reason.By.Handle
 			it.Post.Repost = false // this is the original post; By says who reposted it

@@ -5,7 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 )
+
+// minRefresh is the shortest allowed interval between background checks.
+const minRefresh = 10 * time.Second
 
 func main() {
 	os.Exit(realMain())
@@ -73,19 +77,25 @@ func realMain() int {
 		backlog := fs.Bool("backlog", false, "")
 		list := fs.Bool("list", false, "")
 		asJSON := fs.Bool("json", false, "")
+		refresh := fs.Duration("refresh", 30*time.Second, "")
 		if err := fs.Parse(args); err != nil {
 			return fail(fmt.Errorf("%w: %v", errUsage, err))
+		}
+		if *refresh != 0 && *refresh < minRefresh {
+			return fail(fmt.Errorf("%w: --refresh must be 0 (off) or at least %s", errUsage, minRefresh))
 		}
 		if *list {
 			err = a.cmdFeedList(ctx, *pages, *backlog, *asJSON)
 		} else {
-			err = runTUI(newFeedModel(a,
+			fm := newFeedModel(a,
 				func(ctx context.Context) ([]Profile, map[string]repostCtx, error) {
 					return a.feedCandidates(ctx, *pages, *backlog)
 				},
 				func(ctx context.Context, cursor string) ([]FeedItem, string, error) {
 					return a.c.GetTimeline(ctx, cursor, 50)
-				}))
+				})
+			fm.refresh, fm.backlog = *refresh, *backlog
+			err = runTUI(fm)
 		}
 	} else if cmd == "review" {
 		fs := newFlagSet("review")
