@@ -4,7 +4,7 @@
 #   BSKY_HANDLE=you.bsky.social BSKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx ./smoke.sh
 #
 # What it never does:
-#   - block or unblock for real (block/unblock only run with --dry-run)
+#   - block, unblock, follow or unfollow for real (they only run with --dry-run)
 #   - start the interactive TUI
 #   - touch your real state file or audit log (it uses a temp directory)
 # What it does write: a throwaway state/audit file in that temp directory, which
@@ -39,7 +39,7 @@ check() { local d=$1; shift; if "$@"; then ok "$d"; else bad "$d"; fi; }
 # bsk runs the binary, refusing anything that could change the account or hang on a TUI.
 bsk() {
   case "${1:-}" in
-    block | unblock)
+    block | unblock | follow | unfollow)
       [[ " $* " == *" --dry-run "* ]] || { echo "smoke.sh refuses: '$1' without --dry-run" >&2; exit 99; }
       ;;
     review | feed | "")
@@ -117,6 +117,11 @@ if [[ -n "$HANDLE" ]]; then
   check "block --dry-run exits 0 and says dry-run" bash -c '[[ $1 -eq 0 && $2 == *"dry-run"* ]]' _ "$RC" "$OUT"
   run unblock --dry-run "$HANDLE"
   check "unblock --dry-run exits 0 and says dry-run" bash -c '[[ $1 -eq 0 && $2 == *"dry-run"* ]]' _ "$RC" "$OUT"
+  run follow --dry-run "$HANDLE"
+  check "follow --dry-run exits 0 and says dry-run or already following" bash -c '[[ $1 -eq 0 && ( $2 == *"dry-run"* || $2 == *"already follow"* ) ]]' _ "$RC" "$OUT"
+  run unfollow --dry-run "$HANDLE"
+  check "unfollow --dry-run exits 0 and says dry-run" bash -c '[[ $1 -eq 0 && $2 == *"dry-run"* ]]' _ "$RC" "$OUT"
+  run follow --dry-run;     check "follow with no target exits 2" test "$RC" -eq 2
   OUT=$(printf '%s\n' "$HANDLE" | bsk block --dry-run - 2>&1); RC=$?
   check "block --dry-run - reads handles from stdin" bash -c '[[ $1 -eq 0 && $2 == *"dry-run"* ]]' _ "$RC" "$OUT"
   AFTER=$(bsk show "$HANDLE" | grep '^Status:')

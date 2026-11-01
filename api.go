@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-const blockCollection = "app.bsky.graph.block"
+const (
+	blockCollection  = "app.bsky.graph.block"
+	followCollection = "app.bsky.graph.follow"
+)
 
 // Profile is the subset of app.bsky.actor.defs#profileView(Detailed) we use.
 type Profile struct {
@@ -469,16 +472,17 @@ func (c *Client) GetTimelineReposts(ctx context.Context, pages int) ([]Repost, e
 	return reposts, nil
 }
 
-// Block creates a block record and returns its AT URI.
-func (c *Client) Block(ctx context.Context, did string) (string, error) {
+// createSubjectRecord creates an app.bsky.graph.<block|follow> record about did
+// in your repo and returns its AT URI.
+func (c *Client) createSubjectRecord(ctx context.Context, collection, did string) (string, error) {
 	var out struct {
 		URI string `json:"uri"`
 	}
 	err := c.do(ctx, http.MethodPost, "com.atproto.repo.createRecord", nil, map[string]any{
 		"repo":       c.DID,
-		"collection": blockCollection,
+		"collection": collection,
 		"record": map[string]any{
-			"$type":     blockCollection,
+			"$type":     collection,
 			"subject":   did,
 			"createdAt": time.Now().UTC().Format(time.RFC3339),
 		},
@@ -486,16 +490,63 @@ func (c *Client) Block(ctx context.Context, did string) (string, error) {
 	return out.URI, err
 }
 
-// Unblock deletes the block record identified by its AT URI
-// (at://did/app.bsky.graph.block/rkey).
-func (c *Client) Unblock(ctx context.Context, blockURI string) error {
-	i := strings.LastIndex(blockURI, "/")
+// deleteRecord removes the record at uri (at://did/collection/rkey) from your repo.
+func (c *Client) deleteRecord(ctx context.Context, collection, uri string) error {
+	i := strings.LastIndex(uri, "/")
 	if i < 0 {
-		return fmt.Errorf("bad block uri %q", blockURI)
+		return fmt.Errorf("bad record uri %q", uri)
 	}
 	return c.do(ctx, http.MethodPost, "com.atproto.repo.deleteRecord", nil, map[string]any{
 		"repo":       c.DID,
-		"collection": blockCollection,
-		"rkey":       blockURI[i+1:],
+		"collection": collection,
+		"rkey":       uri[i+1:],
 	}, nil)
+}
+
+// Block creates a block record and returns its AT URI.
+func (c *Client) Block(ctx context.Context, did string) (string, error) {
+	return c.createSubjectRecord(ctx, blockCollection, did)
+}
+
+// Unblock deletes the block record identified by its AT URI.
+func (c *Client) Unblock(ctx context.Context, blockURI string) error {
+	return c.deleteRecord(ctx, blockCollection, blockURI)
+}
+
+// Follow creates a follow record and returns its AT URI.
+func (c *Client) Follow(ctx context.Context, did string) (string, error) {
+	return c.createSubjectRecord(ctx, followCollection, did)
+}
+
+// Unfollow deletes the follow record identified by its AT URI.
+func (c *Client) Unfollow(ctx context.Context, followURI string) error {
+	return c.deleteRecord(ctx, followCollection, followURI)
+}
+
+// isRemote reports whether a decision leaves a record on your account (so that
+// changing it later means deleting that record).
+func isRemote(decision string) bool { return decision == decBlocked || decision == decFollowed }
+
+// createFor performs the remote side of a block or follow decision.
+func (c *Client) createFor(ctx context.Context, decision, did string) (string, error) {
+	if decision == decFollowed {
+		return c.Follow(ctx, did)
+	}
+	return c.Block(ctx, did)
+}
+
+// deleteFor undoes the remote side of a block or follow decision.
+func (c *Client) deleteFor(ctx context.Context, decision, uri string) error {
+	if decision == decFollowed {
+		return c.Unfollow(ctx, uri)
+	}
+	return c.Unblock(ctx, uri)
+}
+
+// viewerURI is the record behind a decision, as reported by the server for p.
+func viewerURI(p *Profile, decision string) string {
+	if decision == decFollowed {
+		return p.Viewer.Following
+	}
+	return p.Viewer.Blocking
 }

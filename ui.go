@@ -55,7 +55,8 @@ type (
 	actMsg struct {
 		undo   undoEntry
 		isUndo bool
-		newURI string // block record created by this action, if any
+		newURI string // block/follow record created by this action, if any
+		lifted bool   // an earlier block/follow record was deleted on the way
 		err    error
 	}
 )
@@ -65,7 +66,7 @@ type undoEntry struct {
 	idx      int
 	profile  Profile
 	decision string
-	blockURI string // block record this decision created
+	record   string // block/follow record this decision created
 	prev     *Entry // decision recorded before this one
 }
 
@@ -99,7 +100,7 @@ type model struct {
 	spin     spinner.Model
 	profiles map[string]*Profile
 	posts    map[string]*[]Post // nil value = in flight
-	blockURI map[string]string  // block records created this session
+	records  map[string]string  // block/follow records behind current decisions (this session)
 	history  []undoEntry
 	confirm  string // DID awaiting a second `b` to block someone you follow
 	scroll   int    // right-panel scroll offset
@@ -125,7 +126,7 @@ func newModel(a *app, title string, load loadFunc) model {
 	return model{
 		a: a, title: title, candLabel: label, loader: load, loading: true, spin: sp,
 		tabs:     []tabID{tabCandidates},
-		profiles: map[string]*Profile{}, posts: map[string]*[]Post{}, blockURI: map[string]string{},
+		profiles: map[string]*Profile{}, posts: map[string]*[]Post{}, records: map[string]string{},
 	}
 }
 
@@ -279,6 +280,9 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 		if msg.isUndo {
 			m.history = append(m.history, e) // still undoable
 		}
+		if msg.lifted {
+			delete(m.records, e.profile.DID) // that record is gone; look it up afresh next time
+		}
 		m.audit(m.auditEvent(msg))
 		m.quitting = false // show the failure before allowing another quit
 		return m, nil
@@ -306,14 +310,14 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 	}
 	m.pending = nil
 	if msg.isUndo {
-		delete(m.blockURI, did)
+		delete(m.records, did)
 		if msg.newURI != "" {
-			m.blockURI[did] = msg.newURI
-			// Restoring a lifted block creates a different record. The earlier
-			// block decision must undo that new record, not the deleted one.
-			for i := len(m.history) - 1; i >= 0; i-- {
-				if m.history[i].profile.DID == did && m.history[i].decision == decBlocked {
-					m.history[i].blockURI = msg.newURI
+			m.records[did] = msg.newURI
+			// Restoring a lifted block/follow creates a different record. The
+			// earlier decision must undo that new record, not the deleted one.
+			for i := len(m.history) - 1; i >= 0 && e.prev != nil; i-- {
+				if m.history[i].profile.DID == did && m.history[i].decision == e.prev.Decision {
+					m.history[i].record = msg.newURI
 					break
 				}
 			}
@@ -323,11 +327,11 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 		}
 		m.status = fmt.Sprintf("undid %s for @%s", e.decision, e.profile.Handle)
 	} else {
-		delete(m.blockURI, did)
-		if e.decision == decBlocked {
-			m.blockURI[did] = msg.newURI
+		delete(m.records, did)
+		if isRemote(e.decision) {
+			m.records[did] = msg.newURI
 		}
-		e.blockURI = msg.newURI
+		e.record = msg.newURI
 		m.history = append(m.history, e)
 		if e.tab == tabCandidates && m.active() == tabCandidates {
 			m.idx = e.idx + 1
@@ -374,7 +378,10 @@ func (m model) via(e undoEntry) string {
 	return ""
 }
 
-var decisionAction = map[string]string{decBlocked: "block", decKept: "keep", decSkipped: "skip"}
+var decisionAction = map[string]string{decBlocked: "block", decFollowed: "follow", decKept: "keep", decSkipped: "skip"}
+
+// liftAction names the audit event for deleting the record behind an overridden decision.
+var liftAction = map[string]string{decBlocked: "unblock", decFollowed: "unfollow"}
 
 // auditEvent is the base event for msg, whether it succeeded or failed.
 func (m model) auditEvent(msg actMsg) AuditEvent {
@@ -392,22 +399,22 @@ func (m model) auditEvent(msg actMsg) AuditEvent {
 	}
 	if msg.isUndo {
 		ev.Action, ev.Detail, ev.Record = "undo", "undid "+e.decision, msg.newURI
-		if e.decision == decBlocked {
-			ev.Record = e.blockURI // the block record that was removed
+		if isRemote(e.decision) {
+			ev.Record = e.record // the block/follow record that was removed
 		}
 		ev.Prev = e.decision
 	}
 	return ev
 }
 
-// auditEvents lists what a successful action did. Overriding a block with keep or
-// skip lifts the block, which gets its own unblock event.
+// auditEvents lists what a successful action did. Overriding a block or follow
+// with another decision deletes that record, which gets its own unblock/unfollow event.
 func (m model) auditEvents(msg actMsg) []AuditEvent {
 	e := msg.undo
 	main := m.auditEvent(msg)
-	if !msg.isUndo && e.prev != nil && e.prev.Decision == decBlocked && e.decision != decBlocked {
+	if !msg.isUndo && e.prev != nil && isRemote(e.prev.Decision) && e.prev.Decision != e.decision {
 		lift := main
-		lift.Action, lift.Detail, lift.Record = "unblock", "lifted by "+e.decision, ""
+		lift.Action, lift.Detail, lift.Record = liftAction[e.prev.Decision], "lifted by "+e.decision, ""
 		return []AuditEvent{lift, main}
 	}
 	return []AuditEvent{main}
@@ -507,6 +514,8 @@ func (m model) candKey(key string) (model, tea.Cmd) {
 		return m.decideKey(p, decKept)
 	case "s":
 		return m.decideKey(p, decSkipped)
+	case "f":
+		return m.decideKey(p, decFollowed)
 	}
 	return m, nil
 }
@@ -555,13 +564,16 @@ func (m model) browseKey(key, confirm string) (model, tea.Cmd) {
 		m = m.ensureVisible()
 	case "u":
 		return m.undo()
-	case "k", "b":
+	case "k", "b", "f":
 		p, ok := m.subject()
 		if !ok {
 			break
 		}
 		if key == "k" {
 			return m.decideKey(p, decKept)
+		}
+		if key == "f" {
+			return m.decideKey(p, decFollowed)
 		}
 		if p.DID == m.a.c.DID {
 			m.status = "that's you"
@@ -593,11 +605,16 @@ func (m model) decideKey(p Profile, decision string) (model, tea.Cmd) {
 		m.status = fmt.Sprintf("@%s is already %s", p.Handle, decision)
 		return m, nil
 	}
+	if decision == decFollowed && p.Viewer.Following != "" {
+		m.status = fmt.Sprintf("you already follow @%s", p.Handle)
+		return m, nil
+	}
 	return m.decide(p, decision)
 }
 
-// decide records decision for p. Blocking (and un-blocking a previously blocked
-// account) calls the API first; the state file is only touched in applyAct.
+// decide records decision for p. Blocking or following (and lifting an earlier
+// block or follow when it is overridden) calls the API first; the state file is
+// only touched in applyAct.
 func (m model) decide(p Profile, decision string) (model, tea.Cmd) {
 	prev, had := m.a.st.Entries[p.DID]
 	var prevP *Entry
@@ -609,11 +626,14 @@ func (m model) decide(p Profile, decision string) (model, tea.Cmd) {
 		idx = m.cur
 	}
 	e := undoEntry{tab: m.active(), idx: idx, profile: p, decision: decision, prev: prevP}
-	wasBlocked := had && prev.Decision == decBlocked
-	known := m.blockURI[p.DID]
-	if known == "" {
-		if fp := m.profiles[p.DID]; fp != nil {
-			known = fp.Viewer.Blocking
+	lift := had && isRemote(prev.Decision) && prev.Decision != decision
+	known := ""
+	if lift {
+		known = m.records[p.DID]
+		if known == "" {
+			if fp := m.profiles[p.DID]; fp != nil {
+				known = viewerURI(fp, prev.Decision)
+			}
 		}
 	}
 	c := m.a.c
@@ -621,18 +641,21 @@ func (m model) decide(p Profile, decision string) (model, tea.Cmd) {
 	return m, func() tea.Msg {
 		ctx := context.Background()
 		msg := actMsg{undo: e}
-		switch {
-		case decision == decBlocked:
-			msg.newURI, msg.err = c.Block(ctx, p.DID)
-		case wasBlocked: // keep/skip on a blocked account lifts the block
+		if lift { // e.g. keep/skip on a blocked account lifts the block
 			if known == "" {
 				if fp, err := c.GetProfile(ctx, p.DID); err == nil {
-					known = fp.Viewer.Blocking
+					known = viewerURI(fp, prev.Decision)
 				}
 			}
 			if known != "" {
-				msg.err = c.Unblock(ctx, known)
+				if msg.err = c.deleteFor(ctx, prev.Decision, known); msg.err != nil {
+					return msg
+				}
 			}
+			msg.lifted = true
+		}
+		if isRemote(decision) {
+			msg.newURI, msg.err = c.createFor(ctx, decision, p.DID)
 		}
 		return msg
 	}
@@ -658,11 +681,11 @@ func (m model) undo() (model, tea.Cmd) {
 	return m, func() tea.Msg {
 		ctx := context.Background()
 		msg := actMsg{undo: e, isUndo: true}
-		if e.decision == decBlocked && e.blockURI != "" {
-			msg.err = c.Unblock(ctx, e.blockURI)
+		if isRemote(e.decision) && e.record != "" {
+			msg.err = c.deleteFor(ctx, e.decision, e.record)
 		}
-		if msg.err == nil && e.prev != nil && e.prev.Decision == decBlocked && e.decision != decBlocked {
-			msg.newURI, msg.err = c.Block(ctx, e.profile.DID) // restore the block we lifted
+		if msg.err == nil && e.prev != nil && isRemote(e.prev.Decision) && e.prev.Decision != e.decision {
+			msg.newURI, msg.err = c.createFor(ctx, e.prev.Decision, e.profile.DID) // restore what we lifted
 		}
 		return msg
 	}
@@ -675,7 +698,7 @@ func (m model) avail() int {
 	if m.height <= 0 {
 		return 1000
 	}
-	return max(m.height-6, 4)
+	return max(m.height-6-(len(m.hintLines())-1), 4)
 }
 
 // panelWidths splits the terminal width into left (profile) and right (posts)
@@ -685,13 +708,13 @@ func (m model) panelWidths() (left, right int, stacked bool) {
 	if w <= 0 {
 		w = 110
 	}
-	if w < 90 {
+	if w < 96 {
 		return w - 2, w - 2, true
 	}
-	// Posts get the narrower column; the profile panel gets the rest, up to 64.
-	r := min(max(w*2/5, 44), 72)
-	l := min(max(w-r-panelGap, 44), 64)
-	return l, r, false
+	// The profile gets 40% (at least 44, at most 80 columns - its content never
+	// needs more); the posts take everything else, so the layout fills any width.
+	l := min(max(w*2/5, 44), 80)
+	return l, w - l - panelGap, false
 }
 
 // rightLines are the scrollable lines of the right-hand panel for the current screen.
@@ -755,6 +778,8 @@ func (m model) decisionBadge(did string) string {
 	switch m.a.st.Entries[did].Decision {
 	case decBlocked:
 		return errStyle.Render("● blocked")
+	case decFollowed:
+		return okStyle.Render("● followed")
 	case decKept:
 		return okStyle.Render("● kept")
 	case decSkipped:
@@ -872,9 +897,18 @@ func (m model) panelsView(pos string) string {
 	return joinColumns(left, right, lw)
 }
 
+// scrollPos is the posts-panel scroll position as "[34%]", or "" if everything fits.
+func (m model) scrollPos() string {
+	n, av := len(m.rightLines()), m.rightAvail()
+	if n <= av {
+		return ""
+	}
+	return dimStyle.Render(fmt.Sprintf("   [%d%%]", (min(m.scroll, n-av)*100)/max(n-av, 1)))
+}
+
 func (m model) tabBar() string {
 	if len(m.tabs) == 1 {
-		return titleStyle.Render("bskyban " + m.title)
+		return titleStyle.Render("bskyban "+m.title) + m.scrollPos()
 	}
 	parts := []string{titleStyle.Render("bskyban")}
 	for i, t := range m.tabs {
@@ -890,35 +924,57 @@ func (m model) tabBar() string {
 			parts = append(parts, dimStyle.Render(label))
 		}
 	}
-	return strings.Join(parts, "   ")
+	return strings.Join(parts, "   ") + m.scrollPos()
 }
 
-func (m model) hint() string {
+// hintItems are the key hints for the current screen.
+func (m model) hintItems() []string {
 	if m.pending != nil {
-		return "r retry saving (actions and quit wait for a successful save)"
+		return []string{"r retry saving (actions and quit wait for a successful save)"}
 	}
 	var items []string
 	switch {
 	case m.active() == tabCandidates:
-		items = []string{"← → move", "↑ ↓ scroll", "b block", "k keep", "s skip", "u undo"}
+		items = []string{"← → move", "↑ ↓ scroll", "b block", "f follow", "k keep", "s skip", "u undo"}
 	case m.inPost:
-		items = []string{"← → prev/next", "↑ ↓ scroll", "esc back", "b block", "k keep", "u undo"}
+		items = []string{"← → prev/next", "↑ ↓ scroll", "esc back", "b block", "f follow", "k keep", "u undo"}
 	default:
-		items = []string{"↑ ↓ move", "enter open", "b block", "k keep", "u undo"}
+		items = []string{"↑ ↓ move", "enter open", "b block", "f follow", "k keep", "u undo"}
 	}
 	if len(m.tabs) > 1 {
 		items = append(items, "tab switch")
 	}
-	items = append(items, "q quit")
-	if n, av := len(m.rightLines()), m.rightAvail(); n > av {
-		items = append(items, fmt.Sprintf("[%d%%]", (min(m.scroll, n-av)*100)/max(n-av, 1)))
-	}
-	h := strings.Join(items, " · ")
-	if m.width > 0 && lipgloss.Width(h) > m.width {
-		h = strings.Join(items, "  ") // tighter on narrow terminals
-	}
-	return truncateWidth(h, max(m.width, 20))
+	return append(items, "q quit")
 }
+
+// hintLines lays the hints out on one line if they fit, otherwise wraps them.
+func (m model) hintLines() []string {
+	items := m.hintItems()
+	if m.width <= 0 {
+		return []string{strings.Join(items, " · ")}
+	}
+	for _, sep := range []string{" · ", "  "} {
+		if h := strings.Join(items, sep); lipgloss.Width(h) <= m.width {
+			return []string{h}
+		}
+	}
+	var lines []string
+	cur := ""
+	for _, it := range items {
+		switch {
+		case cur == "":
+			cur = it
+		case lipgloss.Width(cur)+2+lipgloss.Width(it) <= m.width:
+			cur += "  " + it
+		default:
+			lines = append(lines, cur)
+			cur = it
+		}
+	}
+	return append(lines, cur)
+}
+
+func (m model) hint() string { return strings.Join(m.hintLines(), "\n") }
 
 func (m model) View() string {
 	var b strings.Builder
@@ -957,7 +1013,7 @@ func (m model) View() string {
 	case m.status != "":
 		b.WriteString(warnStyle.Render(m.status) + "\n")
 	}
-	b.WriteString(dimStyle.Render(m.hint()) + "\n")
+	b.WriteString(styleLinesJoin(m.hintLines(), dimStyle) + "\n")
 	return b.String()
 }
 
@@ -1005,7 +1061,7 @@ func (m model) listWidth() int {
 	if m.width <= 0 {
 		return 110
 	}
-	return min(max(m.width-2, 40), 140)
+	return max(m.width-2, 40)
 }
 
 // itemLines renders timeline item i: a header line, up to previewLines lines of
@@ -1035,6 +1091,8 @@ func (m model) itemLines(i, w int) []string {
 	switch m.a.st.Entries[it.Author.DID].Decision {
 	case decBlocked:
 		add("blocked", errStyle)
+	case decFollowed:
+		add("followed", okStyle)
 	case decKept:
 		add("kept", okStyle)
 	}
@@ -1124,4 +1182,8 @@ func renderPost(p Post, w int, full bool) []string {
 		lines = append(lines, indent+"(no text)")
 	}
 	return append(lines, "")
+}
+
+func styleLinesJoin(lines []string, st lipgloss.Style) string {
+	return strings.Join(styleLines(lines, st), "\n")
 }

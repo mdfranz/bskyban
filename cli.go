@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/x/term"
 )
 
 var errUsage = errors.New("usage")
@@ -30,6 +32,8 @@ Usage:
   bskyban block [--dry-run] <handle|did>... (use - to read from stdin)
   bskyban keep <handle|did>...
   bskyban unblock [--dry-run] <handle|did>...
+  bskyban follow [--dry-run] <handle|did>...
+  bskyban unfollow [--dry-run] <handle|did>...
 
 Environment:
   BSKY_HANDLE, BSKY_APP_PASSWORD   required (use an app password)
@@ -123,7 +127,12 @@ func (a *app) cmdFeedList(ctx context.Context, pages int, backlog, asJSON bool) 
 				"repostedBy": r.By, "text": r.Post.Text})
 			continue
 		}
-		fmt.Fprintf(a.stdout, "%-32s via %-40s %s\n", p.Handle, "@"+strings.Join(r.By, ", @"), formatPost(r.Post, 80))
+		// fit the terminal exactly; when piped, don't truncate at all
+		line := fmt.Sprintf("%-32s via %-40s %s", p.Handle, "@"+strings.Join(r.By, ", @"), formatPost(r.Post, 0))
+		if tw := termWidth(a.stdout); tw > 0 {
+			line = truncateWidth(line, tw-1)
+		}
+		fmt.Fprintln(a.stdout, line)
 	}
 	return nil
 }
@@ -136,7 +145,7 @@ func (a *app) run(ctx context.Context, cmd string, args []string) error {
 		return a.cmdBaseline(ctx)
 	case "show":
 		return a.cmdShow(ctx, args)
-	case "block", "keep", "unblock":
+	case "block", "keep", "unblock", "follow", "unfollow":
 		return a.cmdAct(ctx, cmd, args)
 	}
 	return fmt.Errorf("%w: unknown command %q", errUsage, cmd)
@@ -321,6 +330,39 @@ func (a *app) act(ctx context.Context, cmd, id string, dry bool) (err error) {
 			return nil
 		}
 		return a.st.Set(p.DID, p.Handle, decKept)
+	case "follow":
+		if p.Viewer.Following != "" {
+			fmt.Fprintf(a.stdout, "%s@%s: you already follow them\n", strings.Replace(prefix, "would ", "", 1), p.Handle)
+			ev.Detail, ev.Record = "already following", p.Viewer.Following
+			return nil
+		}
+		fmt.Fprintf(a.stdout, "%sfollow @%s (%s)\n", prefix, p.Handle, p.DID)
+		if dry {
+			return nil
+		}
+		uri, err := a.c.Follow(ctx, p.DID)
+		if err != nil {
+			return err
+		}
+		ev.Record = uri
+		return a.st.Set(p.DID, p.Handle, decFollowed)
+	case "unfollow":
+		fmt.Fprintf(a.stdout, "%sunfollow @%s (%s)\n", prefix, p.Handle, p.DID)
+		ev.Record = p.Viewer.Following
+		if dry {
+			return nil
+		}
+		if p.Viewer.Following == "" {
+			ev.Detail = "not following"
+			return nil
+		}
+		if err := a.c.Unfollow(ctx, p.Viewer.Following); err != nil {
+			return err
+		}
+		if a.st.Entries[p.DID].Decision == decFollowed {
+			return a.st.Delete(p.DID)
+		}
+		return nil
 	case "unblock":
 		fmt.Fprintf(a.stdout, "%sunblock @%s (%s)\n", prefix, p.Handle, p.DID)
 		ev.Record = p.Viewer.Blocking
@@ -392,6 +434,19 @@ func formatPost(p Post, max int) string {
 		text = "(no text)"
 	}
 	return fmt.Sprintf("%-5s %s%s", age, tag, text)
+}
+
+// termWidth is the width of w if it is a terminal, or 0 (unknown, e.g. piped).
+func termWidth(w io.Writer) int {
+	f, ok := w.(*os.File)
+	if !ok || !term.IsTerminal(f.Fd()) {
+		return 0
+	}
+	width, _, err := term.GetSize(f.Fd())
+	if err != nil {
+		return 0
+	}
+	return width
 }
 
 func normalizeActor(s string) string { return strings.TrimPrefix(strings.TrimSpace(s), "@") }

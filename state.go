@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	decBlocked = "blocked"
-	decKept    = "kept"
-	decSkipped = "skipped" // deferred or baselined; hidden unless --backlog
+	decBlocked  = "blocked"
+	decKept     = "kept"
+	decFollowed = "followed"
+	decSkipped  = "skipped" // deferred or baselined; hidden unless --backlog
 )
 
 type Entry struct {

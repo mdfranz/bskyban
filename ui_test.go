@@ -37,12 +37,19 @@ func newTestApp(t *testing.T) (*app, *fakePDS) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/xrpc/com.atproto.repo.createRecord":
+			var body struct{ Collection string }
+			_ = json.NewDecoder(r.Body).Decode(&body)
 			n++
-			f.log("block")
-			fmt.Fprintf(w, `{"uri":"at://did:me/app.bsky.graph.block/rk%d"}`, n)
+			kind := "block"
+			if strings.HasSuffix(body.Collection, ".follow") {
+				kind = "follow"
+			}
+			f.log(kind)
+			fmt.Fprintf(w, `{"uri":"at://did:me/%s/rk%d"}`, body.Collection, n)
 		case "/xrpc/com.atproto.repo.deleteRecord":
 			var body struct {
-				RKey string `json:"rkey"`
+				Collection string `json:"collection"`
+				RKey       string `json:"rkey"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -51,10 +58,21 @@ func newTestApp(t *testing.T) (*app, *fakePDS) {
 			f.mu.Lock()
 			f.deleted = append(f.deleted, body.RKey)
 			f.mu.Unlock()
-			f.log("unblock")
+			if strings.HasSuffix(body.Collection, ".follow") {
+				f.log("unfollow")
+			} else {
+				f.log("unblock")
+			}
 			fmt.Fprint(w, `{}`)
 		case "/xrpc/app.bsky.actor.getProfile":
-			fmt.Fprint(w, `{"did":"x","handle":"x","viewer":{"blocking":"at://did:me/app.bsky.graph.block/rk0"}}`)
+			switch r.URL.Query().Get("actor") {
+			case "friend": // someone you follow
+				fmt.Fprint(w, `{"did":"did:friend","handle":"friend","viewer":{"following":"at://did:me/app.bsky.graph.follow/rkf"}}`)
+			case "newbie": // a stranger
+				fmt.Fprint(w, `{"did":"did:newbie","handle":"newbie","viewer":{}}`)
+			default: // "x": already blocked
+				fmt.Fprint(w, `{"did":"x","handle":"x","viewer":{"blocking":"at://did:me/app.bsky.graph.block/rk0"}}`)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -574,14 +592,74 @@ func TestHumanAgeShowsMinutes(t *testing.T) {
 func TestHintFitsNarrowTerminals(t *testing.T) {
 	m, _ := followingModel(t)
 	m.inPost = true
-	for _, w := range []int{60, 80, 100, 140} {
+	for _, w := range []int{50, 60, 80, 100, 140} {
 		m.width = w
-		if hw := lipgloss.Width(m.hint()); hw > w {
-			t.Errorf("width %d: hint is %d wide: %q", w, hw, m.hint())
+		for _, line := range m.hintLines() {
+			if lw := lipgloss.Width(line); lw > w {
+				t.Errorf("width %d: hint line is %d wide: %q", w, lw, line)
+			}
+		}
+		h := m.hint()
+		for _, want := range []string{"f follow", "tab switch", "q quit"} {
+			if !strings.Contains(h, want) {
+				t.Errorf("width %d: hint lost %q: %q", w, want, h)
+			}
 		}
 	}
-	m.width = 80
-	if h := m.hint(); !strings.Contains(h, "q quit") || !strings.Contains(h, "tab switch") {
-		t.Errorf("80 columns should still show tab and quit: %q", h)
+	m.width = 140
+	if len(m.hintLines()) != 1 {
+		t.Error("a wide terminal should keep the hint on one line")
+	}
+	// a wrapped footer must not push the screen past the window height
+	m.width, m.height = 60, 24
+	if got := strings.Count(m.View(), "\n"); got > m.height {
+		t.Errorf("view is %d lines in a %d-line window", got, m.height)
+	}
+}
+
+func TestLayoutUsesTheWholeWidth(t *testing.T) {
+	m, _ := candidates(t)
+	prevRight := 0
+	for _, w := range []int{96, 120, 140, 200, 300} {
+		m.width = w
+		l, r, stacked := m.panelWidths()
+		if stacked {
+			t.Errorf("width %d should not stack", w)
+		}
+		if l+panelGap+r != w {
+			t.Errorf("width %d: panels use %d columns, want all %d", w, l+panelGap+r, w)
+		}
+		if r <= prevRight {
+			t.Errorf("width %d: posts panel (%d) should grow with the window (was %d)", w, r, prevRight)
+		}
+		prevRight = r
+	}
+	m.width = 95
+	if _, _, stacked := m.panelWidths(); !stacked {
+		t.Error("95 columns is too narrow for two panels")
+	}
+	// the timeline list also fills the window instead of stopping at 140
+	f, _ := followingModel(t)
+	f.width = 220
+	if got := f.listWidth(); got != 218 {
+		t.Errorf("listWidth at 220 columns = %d, want 218", got)
+	}
+	for _, w := range []int{100, 180, 260} {
+		m, _ := candidates(t)
+		m.width, m.height = w, 40
+		p := m.list[0]
+		m.profiles[p.DID] = &p
+		posts := []Post{{Text: strings.Repeat("wide terminal text ", 40), CreatedAt: "2026-11-01T06:00:00Z"}}
+		m.posts[p.DID] = &posts
+		var widest int
+		for _, line := range strings.Split(m.View(), "\n") {
+			widest = max(widest, visibleWidth(line))
+		}
+		if widest > w {
+			t.Errorf("width %d: a line is %d wide", w, widest)
+		}
+		if w >= 180 && widest < w*3/4 {
+			t.Errorf("width %d: content only reaches %d columns; wasted space", w, widest)
+		}
 	}
 }

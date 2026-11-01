@@ -8,6 +8,18 @@ By default it only shows **new followers you don't follow back** and haven't
 already decided on. For each one you see the profile (age, avatar, post and
 follow counts, bio) next to their recent posts, then choose to block or keep.
 
+## Screenshots
+
+**Following** – your home timeline, a few lines per post. Reposts are tagged with who
+reposted them; `Enter` opens a post in full.
+
+![The Following tab: timeline posts with author, age and up to three lines of text each](docs/screenshots/following-list.png)
+
+**Reposts** – the original author of a reposted post, with their profile on the left and
+the reposted post and their recent posts on the right. Block, keep or skip with one key.
+
+![The Reposts tab: an account's profile beside the post that was reposted into the timeline](docs/screenshots/reposts-tab.png)
+
 ## Install
 
 Requires Go 1.26+ (see `go.mod`).
@@ -53,10 +65,15 @@ bskyban review --backlog    # also revisit followers you skipped before
 | `Home` / `End` | first / last follower |
 | `↑` / `↓`, `PgUp` / `PgDn` | scroll the posts panel |
 | `b` | block (creates a block on your account immediately) |
+| `f` | follow (creates a follow on your account immediately; undo with `u`) |
 | `k` | keep (record as reviewed, no action) |
 | `s` | skip (hide from the default view; return with `--backlog`) |
 | `u` | undo the last decision (restores whatever was recorded before) |
 | `q` | quit |
+
+Following someone records them as `followed`, so they leave the new list. Changing your
+mind later works like a block: pressing `k`, `s` or `b` on a followed account removes
+the follow first, and `u` puts it back.
 
 Moving back to a follower you already handled shows what you decided (`● blocked`,
 `● kept`, `● skipped`). Pressing a letter again overrides it: `k` or `s` on a
@@ -91,6 +108,7 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 | `Esc` / `Backspace` | | back to list |
 | `←` | | previous post |
 | `b` | block the author | block the author |
+| `f` | follow the author | follow the author |
 | `k` / `u` | keep / undo | keep / undo |
 | `Tab` | switch tab | switch tab |
 
@@ -112,6 +130,8 @@ bskyban show <handle|did>
 bskyban block [--dry-run] <handle|did>...     # "-" reads identifiers from stdin
 bskyban keep <handle|did>...
 bskyban unblock [--dry-run] <handle|did>...
+bskyban follow [--dry-run] <handle|did>...
+bskyban unfollow [--dry-run] <handle|did>...
 bskyban baseline
 ```
 
