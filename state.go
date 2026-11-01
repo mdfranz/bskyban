@@ -59,17 +59,32 @@ func (s *State) Save() error {
 }
 
 func (s *State) Set(did, handle, decision string) error {
-	s.Entries[did] = Entry{Handle: handle, Decision: decision, At: time.Now().UTC()}
-	return s.Save()
+	return s.Put(did, Entry{Handle: handle, Decision: decision, At: time.Now().UTC()})
 }
 
 func (s *State) Delete(did string) error {
+	prev, had := s.Entries[did]
 	delete(s.Entries, did)
-	return s.Save()
+	if err := s.Save(); err != nil {
+		if had {
+			s.Entries[did] = prev
+		}
+		return err
+	}
+	return nil
 }
 
 // Put stores e as the entry for did, as-is (used to restore a previous decision).
 func (s *State) Put(did string, e Entry) error {
+	prev, had := s.Entries[did]
 	s.Entries[did] = e
-	return s.Save()
+	if err := s.Save(); err != nil {
+		if had {
+			s.Entries[did] = prev
+		} else {
+			delete(s.Entries, did)
+		}
+		return err
+	}
+	return nil
 }

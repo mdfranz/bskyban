@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,8 +17,9 @@ import (
 
 // fakePDS records the write calls the UI makes.
 type fakePDS struct {
-	mu    sync.Mutex
-	calls []string
+	mu      sync.Mutex
+	calls   []string
+	deleted []string
 }
 
 func (f *fakePDS) log(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
@@ -39,6 +41,16 @@ func newTestApp(t *testing.T) (*app, *fakePDS) {
 			f.log("block")
 			fmt.Fprintf(w, `{"uri":"at://did:me/app.bsky.graph.block/rk%d"}`, n)
 		case "/xrpc/com.atproto.repo.deleteRecord":
+			var body struct {
+				RKey string `json:"rkey"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			f.mu.Lock()
+			f.deleted = append(f.deleted, body.RKey)
+			f.mu.Unlock()
 			f.log("unblock")
 			fmt.Fprint(w, `{}`)
 		case "/xrpc/app.bsky.actor.getProfile":
@@ -245,6 +257,133 @@ func TestUndoBlockRemovesBlock(t *testing.T) {
 	}
 	if m.idx != 0 || f.joined() != "block,unblock" {
 		t.Errorf("idx=%d calls=%s", m.idx, f.joined())
+	}
+}
+
+func TestUndoRestoredBlockDeletesCurrentRecord(t *testing.T) {
+	m, f := candidates(t)
+	m = press(m, "b")
+	m = press(m, "left")
+	m = press(m, "k")
+	m = press(m, "u")
+	m = press(m, "u")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if got := strings.Join(f.deleted, ","); got != "rk1,rk2" {
+		t.Fatalf("deleted records = %s, want rk1,rk2", got)
+	}
+	if _, ok := m.a.st.Entries["did:a"]; ok {
+		t.Fatal("second undo should remove the decision")
+	}
+}
+
+func TestQuitWaitsForActionPersistenceAndAudit(t *testing.T) {
+	for _, quit := range []tea.KeyMsg{key("q"), {Type: tea.KeyCtrlC}} {
+		t.Run(quit.String(), func(t *testing.T) {
+			m, f := candidates(t)
+			next, action := m.Update(key("b"))
+			m = next.(model)
+			next, exit := m.Update(quit)
+			m = next.(model)
+			if exit != nil || !m.quitting || !m.busy {
+				t.Fatal("quit must wait for the pending action")
+			}
+			next, exit = m.Update(action())
+			m = next.(model)
+			if exit == nil {
+				t.Fatal("expected quit after action completed")
+			}
+			if _, ok := exit().(tea.QuitMsg); !ok {
+				t.Fatal("expected quit message")
+			}
+			st, err := LoadState(m.a.st.path)
+			if err != nil || st.Entries["did:a"].Decision != decBlocked {
+				t.Fatalf("decision not persisted: state=%+v err=%v", st, err)
+			}
+			if got := strings.Join(actions(t, m.a), ","); got != "block" || f.joined() != "block" {
+				t.Fatalf("action not audited: %s", got)
+			}
+		})
+	}
+}
+
+func TestDeferredQuitShowsActionFailure(t *testing.T) {
+	m, _ := candidates(t)
+	next, _ := m.Update(key("b"))
+	m = next.(model)
+	next, _ = m.Update(key("q"))
+	m = next.(model)
+	next, cmd := m.Update(actMsg{
+		undo: undoEntry{profile: m.list[0], decision: decBlocked},
+		err:  fmt.Errorf("remote block failed"),
+	})
+	m = next.(model)
+	if cmd != nil || m.quitting || m.busy || m.err == nil {
+		t.Fatal("failed action should stay open and show the error")
+	}
+	if len(m.a.st.Entries) != 0 || strings.Join(actions(t, m.a), ",") != "block!" {
+		t.Fatal("failed action should only produce a failure audit")
+	}
+}
+
+func TestFailedSaveRetriesWithoutRepeatingRemoteAction(t *testing.T) {
+	for _, undo := range []bool{false, true} {
+		t.Run(fmt.Sprintf("undo=%v", undo), func(t *testing.T) {
+			m, f := candidates(t)
+			if undo {
+				m = press(m, "b")
+			}
+			path := m.a.st.path
+			m.a.st.path = t.TempDir() // rename over a directory must fail
+			beforeIdx, beforeHistory := m.idx, len(m.history)
+			if undo {
+				m = press(m, "u")
+			} else {
+				m = press(m, "b")
+			}
+			if m.err == nil || m.pending == nil || m.idx != beforeIdx {
+				t.Fatalf("failed save advanced or was forgotten: %+v", m)
+			}
+			wantDecision := ""
+			if undo {
+				wantDecision = decBlocked
+				beforeHistory--
+			}
+			if m.a.st.Entries["did:a"].Decision != wantDecision || len(m.history) != beforeHistory {
+				t.Fatal("failed save committed local state or history")
+			}
+			events, err := ReadAudit(m.a.audit.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			last := events[len(events)-1]
+			if last.OK || !strings.Contains(last.Detail, "local persistence failed") {
+				t.Fatalf("failed save audit = %+v", last)
+			}
+			calls := f.joined()
+			m = press(m, "b") // no duplicate remote action while save is pending
+			next, exit := m.Update(key("q"))
+			m = next.(model)
+			if exit != nil {
+				t.Fatal("quit must not discard unsaved decision")
+			}
+			m.a.st.path = path
+			m = press(m, "r")
+			if m.pending != nil || m.err != nil || f.joined() != calls {
+				t.Fatalf("retry repeated action or failed: calls=%s err=%v", f.joined(), m.err)
+			}
+			st, err := LoadState(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantDecision = decBlocked
+			if undo {
+				wantDecision = ""
+			}
+			if st.Entries["did:a"].Decision != wantDecision {
+				t.Fatalf("persisted decision = %s", st.Entries["did:a"].Decision)
+			}
+		})
 	}
 }
 

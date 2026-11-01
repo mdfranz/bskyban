@@ -108,7 +108,7 @@ func realMain() int {
 }
 
 func fail(err error) int {
-	fmt.Fprintln(os.Stderr, "error:", err)
+	fmt.Fprintln(os.Stderr, "error:", terminalText(err.Error()))
 	if errors.Is(err, errUsage) {
 		fmt.Fprint(os.Stderr, "\n", usageText)
 		return 2

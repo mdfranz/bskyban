@@ -4,9 +4,22 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
+
+// terminalText removes controls supplied by remote content. Call before adding
+// our own ANSI styling and OSC hyperlinks, never on already-rendered output.
+func terminalText(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && r != '\n' && r != '\t' {
+			return -1
+		}
+		return r
+	}, ansi.Strip(s))
+}
 
 // Matches http(s) URLs and bare domains with a common TLD. Stops at whitespace
 // and ESC so it can run over already-styled (ANSI) text.
@@ -46,6 +59,7 @@ func linkifyText(s string) string {
 
 // linkifyIfTTY only adds escape codes when stdout is a terminal.
 func linkifyIfTTY(s string) string {
+	s = terminalText(s)
 	if fi, err := os.Stdout.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
 		return linkify(s)
 	}
@@ -99,6 +113,7 @@ func splitWord(word string) []piece {
 // long for a line is split across lines, and every fragment is a hyperlink to
 // the full URL. Newlines in text are kept.
 func wrapText(text string, width int) []string {
+	text = terminalText(text)
 	width = max(width, 8)
 	var lines []string
 	for _, para := range strings.Split(text, "\n") {

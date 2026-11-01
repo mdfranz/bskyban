@@ -226,7 +226,7 @@ func runLog(args []string, out io.Writer) error {
 		if e.Detail != "" {
 			line += "  (" + e.Detail + ")"
 		}
-		fmt.Fprintln(out, line)
+		fmt.Fprintln(out, terminalText(line))
 	}
 	return nil
 }

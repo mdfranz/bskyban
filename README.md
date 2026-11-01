@@ -67,6 +67,11 @@ videos and quote posts are labelled). URLs are clickable in terminals that
 support OSC 8 hyperlinks. Decisions are saved as you go, so quitting midway
 loses nothing.
 
+Quitting during an action waits for it to finish, save, and write its audit entry.
+If saving fails, the review stays on the current account. Fix the storage problem
+and press `r` to retry saving without repeating the remote block or unblock;
+further decisions and quitting wait until the save succeeds.
+
 ## Feed mode
 
 ```sh

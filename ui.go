@@ -94,6 +94,8 @@ type model struct {
 	moreBusy      bool
 
 	busy     bool
+	quitting bool    // wait for the active action to be saved and audited
+	pending  *actMsg // remote action completed, local save needs retrying
 	spin     spinner.Model
 	profiles map[string]*Profile
 	posts    map[string]*[]Post // nil value = in flight
@@ -278,6 +280,7 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 			m.history = append(m.history, e) // still undoable
 		}
 		m.audit(m.auditEvent(msg))
+		m.quitting = false // show the failure before allowing another quit
 		return m, nil
 	}
 	var err error
@@ -288,16 +291,38 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 		} else {
 			err = m.a.st.Delete(did)
 		}
+	} else {
+		err = m.a.st.Set(did, e.profile.Handle, e.decision)
+	}
+	if err != nil {
+		m.pending = &msg
+		m.quitting = false
+		m.err = fmt.Errorf("save decision: %w (press r to retry saving)", err)
+		m.status = "action completed; decision has not been saved"
+		ev := m.auditEvent(msg)
+		ev.OK, ev.Error, ev.Detail = false, m.err.Error(), "action completed; local persistence failed"
+		m.audit(ev)
+		return m, nil
+	}
+	m.pending = nil
+	if msg.isUndo {
 		delete(m.blockURI, did)
 		if msg.newURI != "" {
 			m.blockURI[did] = msg.newURI
+			// Restoring a lifted block creates a different record. The earlier
+			// block decision must undo that new record, not the deleted one.
+			for i := len(m.history) - 1; i >= 0; i-- {
+				if m.history[i].profile.DID == did && m.history[i].decision == decBlocked {
+					m.history[i].blockURI = msg.newURI
+					break
+				}
+			}
 		}
 		if e.tab == tabCandidates && m.active() == tabCandidates {
 			m.idx = e.idx
 		}
 		m.status = fmt.Sprintf("undid %s for @%s", e.decision, e.profile.Handle)
 	} else {
-		err = m.a.st.Set(did, e.profile.Handle, e.decision)
 		delete(m.blockURI, did)
 		if e.decision == decBlocked {
 			m.blockURI[did] = msg.newURI
@@ -314,6 +339,10 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 	for _, ev := range m.auditEvents(msg) {
 		m.audit(ev)
 	}
+	if m.quitting && m.err == nil {
+		return m, tea.Quit
+	}
+	m.quitting = false
 	return m, m.prefetch()
 }
 
@@ -388,7 +417,22 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := k.String()
 	switch key {
 	case "q", "ctrl+c":
+		if m.pending != nil {
+			m.status = "decision has not been saved; press r to retry saving before quitting"
+			return m, nil
+		}
+		if m.busy {
+			m.quitting = true
+			m.status = "finishing action before quitting…"
+			return m, nil
+		}
 		return m, tea.Quit
+	}
+	if m.pending != nil {
+		if key == "r" {
+			return m.applyAct(*m.pending)
+		}
+		return m, nil
 	}
 	confirm := m.confirm
 	m.confirm = ""
@@ -850,6 +894,9 @@ func (m model) tabBar() string {
 }
 
 func (m model) hint() string {
+	if m.pending != nil {
+		return "r retry saving (actions and quit wait for a successful save)"
+	}
 	var items []string
 	switch {
 	case m.active() == tabCandidates:
@@ -900,7 +947,7 @@ func (m model) View() string {
 	}
 	b.WriteString("\n")
 	if m.err != nil {
-		b.WriteString(errStyle.Render("error: "+m.err.Error()) + "\n")
+		b.WriteString(errStyle.Render("error: "+terminalText(m.err.Error())) + "\n")
 	}
 	switch {
 	case m.busy:

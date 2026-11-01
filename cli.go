@@ -381,12 +381,12 @@ func formatPost(p Post, max int) string {
 	if t, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
 		age = humanAge(time.Since(t))
 	}
-	text := strings.Join(strings.Fields(p.Text), " ")
+	text := strings.Join(strings.Fields(terminalText(p.Text)), " ")
 	if r := []rune(text); max > 0 && len(r) > max {
 		text = string(r[:max-1]) + "…"
 	}
 	if len(p.Attach) > 0 {
-		text = strings.TrimSpace(text + " " + strings.Join(p.Attach, " "))
+		text = strings.TrimSpace(text + " " + terminalText(strings.Join(p.Attach, " ")))
 	}
 	if text == "" {
 		text = "(no text)"

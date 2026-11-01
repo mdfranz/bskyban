@@ -1,9 +1,42 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
+
+func TestUntrustedTerminalControlsAreRemoved(t *testing.T) {
+	cases := []struct{ input, want string }{
+		{"before\x1b]52;c;YWJj\x07after", "beforeafter"},
+		{"before\x1b]52;c;YWJj\x1b\\after", "beforeafter"},
+		{"before\x1b[2Jafter", "beforeafter"},
+		{"before\x1b[31mred\x1b[0mafter", "beforeredafter"},
+		{"line one\nline two\t✓", "line one\nline two\t✓"},
+		{"a\x00\x07\x08\r\u009bb", "ab"},
+	}
+	for _, tc := range cases {
+		if got := terminalText(tc.input); got != tc.want {
+			t.Errorf("terminalText(%q) = %q, want %q", tc.input, got, tc.want)
+		}
+	}
+	payload := "hello\x1b]52;c;YWJj\x07 https://example.com"
+	wrapped := strings.Join(wrapText(payload, 80), "\n")
+	if strings.Contains(wrapped, "52;") || !strings.Contains(wrapped, osc8("https://example.com", "https://example.com")) {
+		t.Fatalf("unsafe content survived or app hyperlink was lost: %q", wrapped)
+	}
+	var p Profile
+	data, _ := json.Marshal(map[string]string{"displayName": payload, "description": payload})
+	if err := json.Unmarshal(data, &p); err != nil {
+		t.Fatal(err)
+	}
+	if strings.ContainsAny(p.DisplayName+p.Description, "\x1b\x07") {
+		t.Fatalf("decoded profile retained controls: %+v", p)
+	}
+	if got := formatPost(Post{Text: payload, Attach: []string{payload}}, 0); strings.ContainsAny(got, "\x1b\x07") {
+		t.Fatalf("CLI post retained controls: %q", got)
+	}
+}
 
 func TestLinkify(t *testing.T) {
 	cases := map[string]string{

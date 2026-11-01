@@ -33,6 +33,20 @@ type Profile struct {
 	} `json:"viewer"`
 }
 
+func (p *Profile) UnmarshalJSON(data []byte) error {
+	type plain Profile
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*p = Profile(decoded)
+	p.DisplayName = terminalText(p.DisplayName)
+	p.Description = terminalText(p.Description)
+	p.Handle = terminalText(p.Handle)
+	p.DID = terminalText(p.DID)
+	return nil
+}
+
 // Age returns the account age, or 0 if the creation time is unknown.
 func (p Profile) Age() time.Duration {
 	t, err := time.Parse(time.RFC3339, p.CreatedAt)
@@ -89,7 +103,7 @@ func (c *Client) do(ctx context.Context, method, nsid string, query url.Values, 
 		var e struct{ Error, Message string }
 		_ = json.Unmarshal(data, &e)
 		if e.Error != "" {
-			return fmt.Errorf("%s: %s (%s)", nsid, e.Message, e.Error)
+			return fmt.Errorf("%s: %s (%s)", nsid, terminalText(e.Message), terminalText(e.Error))
 		}
 		return fmt.Errorf("%s: HTTP %d", nsid, resp.StatusCode)
 	}
