@@ -70,11 +70,20 @@ func splitWord(word string) []piece {
 	var out []piece
 	pos := 0
 	for _, loc := range linkRe.FindAllStringIndex(word, -1) {
-		if loc[0] > pos {
-			out = append(out, piece{text: word[pos:loc[0]]})
+		start := loc[0]
+		url := strings.TrimRight(word[start:loc[1]], urlTrailing)
+		target := urlTarget(url)
+		text := url
+		if start > 0 && word[start-1] == '@' && !strings.Contains(url, "/") {
+			// an @mention: link to the profile and keep the @ in the link text
+			start--
+			text = "@" + url
+			target = "https://bsky.app/profile/" + url
 		}
-		url := strings.TrimRight(word[loc[0]:loc[1]], urlTrailing)
-		out = append(out, piece{text: url, target: urlTarget(url)})
+		if start > pos {
+			out = append(out, piece{text: word[pos:start]})
+		}
+		out = append(out, piece{text: text, target: target})
 		if tail := word[loc[0]+len(url) : loc[1]]; tail != "" {
 			out = append(out, piece{text: tail})
 		}

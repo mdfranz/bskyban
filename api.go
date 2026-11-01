@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -175,6 +176,12 @@ type Post struct {
 	Repost    bool
 	Reply     bool
 	Attach    []string // one-line descriptions of images, links, video, quotes
+
+	// Only set for posts that come with hydrated context (timeline / author feeds).
+	Quote        string   // "@handle: text" of a quoted post
+	Images       []string // full-size image URLs
+	ParentHandle string   // for replies: who is being replied to
+	ParentText   string
 }
 
 type facet struct {
@@ -267,37 +274,184 @@ func describeEmbed(raw json.RawMessage) []string {
 
 // GetRecentPosts returns up to limit of the account's latest posts, replies and reposts included.
 func (c *Client) GetRecentPosts(ctx context.Context, actor string, limit int) ([]Post, error) {
-	var out struct {
-		Feed []struct {
-			Post struct {
-				Record struct {
-					Text      string          `json:"text"`
-					CreatedAt string          `json:"createdAt"`
-					Reply     json.RawMessage `json:"reply"`
-					Embed     json.RawMessage `json:"embed"`
-					Facets    []facet         `json:"facets"`
-				} `json:"record"`
-			} `json:"post"`
-			Reason struct {
-				Type string `json:"$type"`
-			} `json:"reason"`
-		} `json:"feed"`
-	}
 	q := url.Values{"actor": {actor}, "limit": {fmt.Sprint(limit)}, "filter": {"posts_with_replies"}}
-	if err := c.do(ctx, http.MethodGet, "app.bsky.feed.getAuthorFeed", q, nil, &out); err != nil {
+	entries, _, err := c.feedPage(ctx, "app.bsky.feed.getAuthorFeed", q)
+	if err != nil {
 		return nil, err
 	}
-	posts := make([]Post, 0, len(out.Feed))
-	for _, f := range out.Feed {
-		posts = append(posts, Post{
-			Text:      expandLinks(f.Post.Record.Text, f.Post.Record.Facets),
-			CreatedAt: f.Post.Record.CreatedAt,
-			Repost:    strings.HasSuffix(f.Reason.Type, "reasonRepost"),
-			Reply:     len(f.Post.Record.Reply) > 0 && string(f.Post.Record.Reply) != "null",
-			Attach:    describeEmbed(f.Post.Record.Embed),
-		})
+	posts := make([]Post, 0, len(entries))
+	for _, e := range entries {
+		posts = append(posts, e.toPost())
 	}
 	return posts, nil
+}
+
+// feedEntry is one app.bsky.feed.defs#feedViewPost.
+type feedEntry struct {
+	Post struct {
+		URI    string          `json:"uri"`
+		Author Profile         `json:"author"`
+		Embed  json.RawMessage `json:"embed"` // hydrated view
+		Record struct {
+			Text      string          `json:"text"`
+			CreatedAt string          `json:"createdAt"`
+			Reply     json.RawMessage `json:"reply"`
+			Embed     json.RawMessage `json:"embed"`
+			Facets    []facet         `json:"facets"`
+		} `json:"record"`
+	} `json:"post"`
+	Reply struct {
+		Parent struct {
+			Author Profile `json:"author"`
+			Record struct {
+				Text string `json:"text"`
+			} `json:"record"`
+		} `json:"parent"`
+	} `json:"reply"`
+	Reason struct {
+		Type string  `json:"$type"`
+		By   Profile `json:"by"`
+	} `json:"reason"`
+}
+
+// viewContext pulls a quoted post and image URLs out of a hydrated embed view.
+func viewContext(raw json.RawMessage) (quote string, images []string) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return
+	}
+	var v struct {
+		Type   string `json:"$type"`
+		Images []struct {
+			Fullsize string `json:"fullsize"`
+		} `json:"images"`
+		Record json.RawMessage `json:"record"`
+		Media  json.RawMessage `json:"media"`
+	}
+	if json.Unmarshal(raw, &v) != nil {
+		return
+	}
+	for _, im := range v.Images {
+		if im.Fullsize != "" {
+			images = append(images, im.Fullsize)
+		}
+	}
+	if len(v.Media) > 0 { // recordWithMedia
+		_, mi := viewContext(v.Media)
+		images = append(images, mi...)
+	}
+	if len(v.Record) > 0 {
+		var r struct {
+			Author Profile `json:"author"`
+			Value  struct {
+				Text   string  `json:"text"`
+				Facets []facet `json:"facets"`
+			} `json:"value"`
+			Record json.RawMessage `json:"record"` // recordWithMedia nests one level deeper
+		}
+		if json.Unmarshal(v.Record, &r) == nil {
+			if r.Author.Handle == "" && len(r.Record) > 0 {
+				_ = json.Unmarshal(r.Record, &r)
+			}
+			if r.Author.Handle != "" {
+				quote = "@" + r.Author.Handle + ": " + expandLinks(r.Value.Text, r.Value.Facets)
+			}
+		}
+	}
+	return
+}
+
+func (e feedEntry) isRepost() bool { return strings.HasSuffix(e.Reason.Type, "reasonRepost") }
+
+func (e feedEntry) toPost() Post {
+	r := e.Post.Record
+	p := Post{
+		Text:         expandLinks(r.Text, r.Facets),
+		CreatedAt:    r.CreatedAt,
+		Repost:       e.isRepost(),
+		Reply:        len(r.Reply) > 0 && string(r.Reply) != "null",
+		Attach:       describeEmbed(r.Embed),
+		ParentHandle: e.Reply.Parent.Author.Handle,
+		ParentText:   e.Reply.Parent.Record.Text,
+	}
+	p.Quote, p.Images = viewContext(e.Post.Embed)
+	if p.Quote != "" { // the quote text replaces the bare "[quote post]" marker
+		p.Attach = slices.DeleteFunc(p.Attach, func(s string) bool { return s == "[quote post]" })
+	}
+	return p
+}
+
+func (c *Client) feedPage(ctx context.Context, nsid string, q url.Values) ([]feedEntry, string, error) {
+	var out struct {
+		Feed   []feedEntry `json:"feed"`
+		Cursor string      `json:"cursor"`
+	}
+	if err := c.do(ctx, http.MethodGet, nsid, q, nil, &out); err != nil {
+		return nil, "", err
+	}
+	return out.Feed, out.Cursor, nil
+}
+
+// FeedItem is one timeline entry: a post, its author, and who reposted it (if anyone).
+type FeedItem struct {
+	Post   Post
+	Author Profile
+	By     string // handle of the reposter, empty for original posts
+}
+
+// GetTimeline returns one page of your home timeline (accounts you follow),
+// newest first, plus the cursor for the next page ("" when there is none).
+func (c *Client) GetTimeline(ctx context.Context, cursor string, limit int) ([]FeedItem, string, error) {
+	q := url.Values{"limit": {fmt.Sprint(limit)}}
+	if cursor != "" {
+		q.Set("cursor", cursor)
+	}
+	entries, next, err := c.feedPage(ctx, "app.bsky.feed.getTimeline", q)
+	if err != nil {
+		return nil, "", err
+	}
+	items := make([]FeedItem, 0, len(entries))
+	for _, e := range entries {
+		it := FeedItem{Post: e.toPost(), Author: e.Post.Author}
+		if e.isRepost() {
+			it.By = e.Reason.By.Handle
+		}
+		items = append(items, it)
+	}
+	return items, next, nil
+}
+
+// Repost is a post someone you follow reposted, with its original author.
+type Repost struct {
+	Post   Post
+	Author Profile // original author
+	By     Profile // who reposted it
+}
+
+// GetTimelineReposts scans up to pages pages (100 items each) of your home
+// timeline, newest first, and returns the reposts in it.
+func (c *Client) GetTimelineReposts(ctx context.Context, pages int) ([]Repost, error) {
+	var reposts []Repost
+	cursor := ""
+	for i := 0; i < max(pages, 1); i++ {
+		q := url.Values{"limit": {"100"}}
+		if cursor != "" {
+			q.Set("cursor", cursor)
+		}
+		entries, next, err := c.feedPage(ctx, "app.bsky.feed.getTimeline", q)
+		if err != nil {
+			return nil, err
+		}
+		for _, e := range entries {
+			if e.isRepost() {
+				reposts = append(reposts, Repost{Post: e.toPost(), Author: e.Post.Author, By: e.Reason.By})
+			}
+		}
+		if next == "" || len(entries) == 0 {
+			break
+		}
+		cursor = next
+	}
+	return reposts, nil
 }
 
 // Block creates a block record and returns its AT URI.

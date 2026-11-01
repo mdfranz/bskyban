@@ -25,14 +25,6 @@ type State struct {
 	Entries map[string]Entry `json:"entries"` // keyed by DID
 }
 
-func defaultStatePath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "bskyban", "state.json"), nil
-}
-
 func LoadState(path string) (*State, error) {
 	s := &State{path: path, Entries: map[string]Entry{}}
 	b, err := os.ReadFile(path)
@@ -73,5 +65,11 @@ func (s *State) Set(did, handle, decision string) error {
 
 func (s *State) Delete(did string) error {
 	delete(s.Entries, did)
+	return s.Save()
+}
+
+// Put stores e as the entry for did, as-is (used to restore a previous decision).
+func (s *State) Put(did string, e Entry) error {
+	s.Entries[did] = e
 	return s.Save()
 }

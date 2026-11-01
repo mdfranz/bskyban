@@ -60,3 +60,14 @@ func TestExpandLinks(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestMentionLinksToProfile(t *testing.T) {
+	lines := wrapText("thanks @piper.bsky.social: great", 60)
+	want := osc8("https://bsky.app/profile/piper.bsky.social", "@piper.bsky.social")
+	if len(lines) != 1 || !strings.Contains(lines[0], want) {
+		t.Errorf("mention not linked to the profile: %q", lines)
+	}
+	if got := oscRe.ReplaceAllString(lines[0], ""); got != "thanks @piper.bsky.social: great" {
+		t.Errorf("visible text changed: %q", got)
+	}
+}

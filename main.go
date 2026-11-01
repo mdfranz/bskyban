@@ -26,6 +26,13 @@ func realMain() int {
 		return 0
 	}
 
+	if cmd == "log" {
+		if err := runLog(args, os.Stdout); err != nil {
+			return fail(err)
+		}
+		return 0
+	}
+
 	handle, pw := os.Getenv("BSKY_HANDLE"), os.Getenv("BSKY_APP_PASSWORD")
 	if handle == "" || pw == "" {
 		fmt.Fprintln(os.Stderr, "BSKY_HANDLE and BSKY_APP_PASSWORD must be set")
@@ -42,6 +49,13 @@ func realMain() int {
 			return fail(err)
 		}
 	}
+	auditPath := os.Getenv("BSKYBAN_AUDIT")
+	if auditPath == "" {
+		var err error
+		if auditPath, err = defaultAuditPath(); err != nil {
+			return fail(err)
+		}
+	}
 	st, err := LoadState(statePath)
 	if err != nil {
 		return fail(err)
@@ -51,16 +65,39 @@ func realMain() int {
 	if err := c.Login(ctx, handle, pw); err != nil {
 		return fail(fmt.Errorf("login: %w", err))
 	}
-	a := &app{c: c, st: st, stdin: os.Stdin, stdout: os.Stdout}
+	a := &app{c: c, st: st, audit: NewAudit(auditPath), stdin: os.Stdin, stdout: os.Stdout}
 
-	if cmd == "review" {
+	if cmd == "feed" {
+		fs := newFlagSet("feed")
+		pages := fs.Int("pages", 3, "")
+		backlog := fs.Bool("backlog", false, "")
+		list := fs.Bool("list", false, "")
+		asJSON := fs.Bool("json", false, "")
+		if err := fs.Parse(args); err != nil {
+			return fail(fmt.Errorf("%w: %v", errUsage, err))
+		}
+		if *list {
+			err = a.cmdFeedList(ctx, *pages, *backlog, *asJSON)
+		} else {
+			err = runTUI(newFeedModel(a,
+				func(ctx context.Context) ([]Profile, map[string]repostCtx, error) {
+					return a.feedCandidates(ctx, *pages, *backlog)
+				},
+				func(ctx context.Context, cursor string) ([]FeedItem, string, error) {
+					return a.c.GetTimeline(ctx, cursor, 50)
+				}))
+		}
+	} else if cmd == "review" {
 		fs := newFlagSet("review")
 		since := fs.Int("since", 0, "")
 		backlog := fs.Bool("backlog", false, "")
 		if err := fs.Parse(args); err != nil {
 			return fail(fmt.Errorf("%w: %v", errUsage, err))
 		}
-		err = runTUI(a, *since, *backlog)
+		err = runTUI(newModel(a, "review", func(ctx context.Context) ([]Profile, map[string]repostCtx, error) {
+			l, err := a.followers(ctx, *since, false, *backlog)
+			return l, nil, err
+		}))
 	} else {
 		err = a.run(ctx, cmd, args)
 	}

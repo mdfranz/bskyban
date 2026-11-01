@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -19,7 +20,11 @@ const usageText = `bskyban - review and block Bluesky followers
 
 Usage:
   bskyban [review] [--since N] [--backlog]   interactive TUI (new followers only)
+  bskyban feed [--pages N] [--backlog] [--list [--json]]
+                                        review authors of reposts in your timeline
   bskyban list [--since N] [--backlog] [--all] [--json]
+  bskyban log [--since 7d] [--action block] [--who handle] [-n 50] [--json]
+                                        show the audit log (no login needed)
   bskyban baseline                      mark all current non-followed followers as old
   bskyban show <handle|did>
   bskyban block [--dry-run] <handle|did>... (use - to read from stdin)
@@ -29,12 +34,15 @@ Usage:
 Environment:
   BSKY_HANDLE, BSKY_APP_PASSWORD   required (use an app password)
   BSKY_PDS                         optional, default https://bsky.social
-  BSKYBAN_STATE                    optional state file path
+  BSKYBAN_STATE                    optional state file (default ~/.local/state/bskyban/state.json)
+  BSKYBAN_AUDIT                    optional audit log (default ~/.local/state/bskyban/audit.jsonl)
+  XDG_STATE_HOME                   moves the default state directory
 `
 
 type app struct {
 	c      *Client
 	st     *State
+	audit  *Audit
 	stdin  io.Reader
 	stdout io.Writer
 }
@@ -52,15 +60,72 @@ func (a *app) followers(ctx context.Context, since int, all, backlog bool) ([]Pr
 	}
 	var out []Profile
 	for _, f := range fs {
-		if f.Viewer.Following != "" {
-			continue // you follow them back; not a stranger
-		}
-		e, done := a.st.Entries[f.DID]
-		if !done || (backlog && e.Decision == decSkipped) {
+		if a.isNew(f, backlog) {
 			out = append(out, f)
 		}
 	}
 	return out, nil
+}
+
+// isNew reports whether p is someone you don't follow, haven't blocked, and have
+// no recorded decision for (skipped ones count when backlog is true).
+func (a *app) isNew(p Profile, backlog bool) bool {
+	if p.Viewer.Following != "" || p.Viewer.Blocking != "" || p.DID == a.c.DID {
+		return false
+	}
+	e, done := a.st.Entries[p.DID]
+	return !done || (backlog && e.Decision == decSkipped)
+}
+
+// repostCtx records how a candidate reached your timeline.
+type repostCtx struct {
+	Post Post
+	By   []string // handles of people you follow who reposted them
+}
+
+// feedCandidates returns the original authors of reposts in your timeline that
+// are new to you, in order of first appearance (newest first), each once.
+func (a *app) feedCandidates(ctx context.Context, pages int, backlog bool) ([]Profile, map[string]repostCtx, error) {
+	reposts, err := a.c.GetTimelineReposts(ctx, pages)
+	if err != nil {
+		return nil, nil, err
+	}
+	var out []Profile
+	rc := map[string]repostCtx{}
+	for _, r := range reposts {
+		if !a.isNew(r.Author, backlog) {
+			continue
+		}
+		cur, seen := rc[r.Author.DID]
+		if !seen {
+			out = append(out, r.Author)
+			cur.Post = r.Post
+			cur.Post.Repost = false // shown as the original post, under "Reposted by"
+		}
+		if !slices.Contains(cur.By, r.By.Handle) {
+			cur.By = append(cur.By, r.By.Handle)
+		}
+		rc[r.Author.DID] = cur
+	}
+	return out, rc, nil
+}
+
+func (a *app) cmdFeedList(ctx context.Context, pages int, backlog, asJSON bool) error {
+	list, rc, err := a.feedCandidates(ctx, pages, backlog)
+	if err != nil {
+		return err
+	}
+	enc := json.NewEncoder(a.stdout)
+	for _, p := range list {
+		r := rc[p.DID]
+		if asJSON {
+			_ = enc.Encode(map[string]any{"did": p.DID, "handle": p.Handle, "displayName": p.DisplayName,
+				"repostedBy": r.By, "text": r.Post.Text})
+			continue
+		}
+		fmt.Fprintf(a.stdout, "%-32s via %-40s %s\n", p.Handle, "@"+strings.Join(r.By, ", @"), formatPost(r.Post, 80))
+	}
+	return nil
 }
 
 func (a *app) run(ctx context.Context, cmd string, args []string) error {
@@ -147,6 +212,7 @@ func (a *app) cmdBaseline(ctx context.Context) error {
 	if err := a.st.Save(); err != nil {
 		return err
 	}
+	a.record(AuditEvent{Action: "baseline", OK: true, Detail: fmt.Sprintf("%d followers marked as old", len(list))})
 	fmt.Fprintf(a.stdout, "baselined %d existing followers; only new ones will show by default (--backlog to revisit)\n", len(list))
 	return nil
 }
@@ -210,11 +276,21 @@ func (a *app) cmdAct(ctx context.Context, cmd string, args []string) error {
 	return nil
 }
 
-func (a *app) act(ctx context.Context, cmd, id string, dry bool) error {
-	p, err := a.c.GetProfile(ctx, id)
-	if err != nil {
-		return err
+func (a *app) act(ctx context.Context, cmd, id string, dry bool) (err error) {
+	p, perr := a.c.GetProfile(ctx, id)
+	if perr != nil {
+		a.record(AuditEvent{Action: cmd, Handle: id, DryRun: dry, Error: perr.Error()})
+		return perr
 	}
+	prev := a.st.Entries[p.DID].Decision
+	ev := AuditEvent{Action: cmd, DID: p.DID, Handle: p.Handle, DryRun: dry, Prev: prev, Snapshot: snapshotOf(*p, true)}
+	defer func() {
+		ev.OK = err == nil
+		if err != nil {
+			ev.Error = err.Error()
+		}
+		a.record(ev)
+	}()
 	prefix := ""
 	if dry {
 		prefix = "[dry-run] would "
@@ -222,7 +298,8 @@ func (a *app) act(ctx context.Context, cmd, id string, dry bool) error {
 	switch cmd {
 	case "block":
 		if p.Viewer.Blocking != "" {
-			fmt.Fprintf(a.stdout, "%salready blocked: @%s\n", prefix, p.Handle)
+			fmt.Fprintf(a.stdout, "%s@%s is already blocked\n", strings.Replace(prefix, "would ", "", 1), p.Handle)
+			ev.Detail, ev.Record = "already blocked", p.Viewer.Blocking
 			if dry {
 				return nil
 			}
@@ -232,15 +309,21 @@ func (a *app) act(ctx context.Context, cmd, id string, dry bool) error {
 		if dry {
 			return nil
 		}
-		if _, err := a.c.Block(ctx, p.DID); err != nil {
+		uri, err := a.c.Block(ctx, p.DID)
+		if err != nil {
 			return err
 		}
+		ev.Record = uri
 		return a.st.Set(p.DID, p.Handle, decBlocked)
 	case "keep":
-		fmt.Fprintf(a.stdout, "keep @%s\n", p.Handle)
+		fmt.Fprintf(a.stdout, "%skeep @%s\n", prefix, p.Handle)
+		if dry {
+			return nil
+		}
 		return a.st.Set(p.DID, p.Handle, decKept)
 	case "unblock":
 		fmt.Fprintf(a.stdout, "%sunblock @%s (%s)\n", prefix, p.Handle, p.DID)
+		ev.Record = p.Viewer.Blocking
 		if dry {
 			return nil
 		}
@@ -252,6 +335,16 @@ func (a *app) act(ctx context.Context, cmd, id string, dry bool) error {
 		return a.st.Delete(p.DID)
 	}
 	return nil
+}
+
+// record writes an audit event; a failing log is reported but never hides the action's result.
+func (a *app) record(e AuditEvent) {
+	if e.Source == "" {
+		e.Source = "cli"
+	}
+	if err := a.audit.Log(e); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: audit log: %v\n", err)
+	}
 }
 
 // identifiers expands "-" into whitespace-separated first fields of stdin lines.

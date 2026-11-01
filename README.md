@@ -35,7 +35,9 @@ export BSKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
 | `BSKY_HANDLE` | your handle (required) |
 | `BSKY_APP_PASSWORD` | app password (required; never written to disk) |
 | `BSKY_PDS` | PDS URL, default `https://bsky.social` |
-| `BSKYBAN_STATE` | state file, default `~/.config/bskyban/state.json` |
+| `BSKYBAN_STATE` | decisions file, default `~/.local/state/bskyban/state.json` |
+| `BSKYBAN_AUDIT` | audit log, default `~/.local/state/bskyban/audit.jsonl` |
+| `XDG_STATE_HOME` | moves the default state directory |
 
 ## TUI
 
@@ -47,16 +49,55 @@ bskyban review --backlog    # also revisit followers you skipped before
 
 | Key | Action |
 |---|---|
+| `→` / `l`, `←` / `h` | next / previous follower (just moves; records nothing) |
+| `Home` / `End` | first / last follower |
+| `↑` / `↓`, `PgUp` / `PgDn` | scroll the posts panel |
 | `b` | block (creates a block on your account immediately) |
 | `k` | keep (record as reviewed, no action) |
 | `s` | skip (hide from the default view; return with `--backlog`) |
-| `u` | undo the last decision (unblocks if it was a block) |
+| `u` | undo the last decision (restores whatever was recorded before) |
 | `q` | quit |
+
+Moving back to a follower you already handled shows what you decided (`● blocked`,
+`● kept`, `● skipped`). Pressing a letter again overrides it: `k` or `s` on a
+blocked account lifts the block, and `u` puts the previous decision back.
 
 Profile on the left, recent posts on the right (replies, reposts, images, links,
 videos and quote posts are labelled). URLs are clickable in terminals that
 support OSC 8 hyperlinks. Decisions are saved as you go, so quitting midway
 loses nothing.
+
+## Feed mode
+
+```sh
+bskyban feed                 # TUI with two tabs: Following and Reposts
+bskyban feed --pages 5       # scan more of the timeline for the Reposts tab (100 items/page, default 3)
+bskyban feed --list [--json] # print the Reposts candidates instead
+```
+
+**Following** is your home timeline (accounts you follow). The list shows one post
+per two lines; open one to see it in full next to its author's profile, including
+the parent of a reply, quoted posts, image links and recent posts by the author.
+
+| Key | List | Post view |
+|---|---|---|
+| `↑` / `↓`, `PgUp` / `PgDn` | move | scroll |
+| `Enter` / `→` | open post | next post |
+| `Esc` / `Backspace` | | back to list |
+| `←` | | previous post |
+| `b` | block the author | block the author |
+| `k` / `u` | keep / undo | keep / undo |
+| `Tab` | switch tab | switch tab |
+
+Blocking someone you follow asks you to press `b` a second time. More of the
+timeline loads as you near the end.
+
+**Reposts** reviews people you *don't* follow who reach you through someone you
+do: for each repost in your timeline it takes the original author, skipping
+anyone you follow, have blocked or already decided on, each once. It works like
+the follower review above, with "Reposted by @…" and the reposted post at the
+top of the right panel. `b` blocks the original author; the account you follow
+who reposted them is unaffected.
 
 ## CLI
 
@@ -81,10 +122,29 @@ bskyban list --json \
   | bskyban block --dry-run -
 ```
 
+## Audit log
+
+Every block, unblock, keep, skip, undo and `baseline` is appended to
+`~/.local/state/bskyban/audit.jsonl` (`$XDG_STATE_HOME/bskyban/` if set): one JSON
+object per line, never rewritten, readable only by you (`0600`). Failed API calls and
+`--dry-run` runs are logged too, flagged as such. It holds no password or token.
+
+Each entry has the time, action, account (DID and handle), where the action came
+from (`cli`, `tui:review`, `tui:following`, `tui:reposts`), who reposted the account
+into your timeline (`via`), the block record created or removed, the previous
+decision, and a snapshot of the account at the time (account age, avatar, the first
+200 characters of the bio, and post/follower/following counts when known).
+
+```sh
+bskyban log                          # latest 50 entries (no login needed)
+bskyban log --since 7d --action block
+bskyban log --who spam.bsky.social --json
+```
+
 ## How "new" is decided
 
 A follower is new if you don't follow them back and `state.json` has no entry
-for them. `block` and `keep` record a decision; `s` and `baseline` record
+for them (that file is `state.json` in the state directory). `block` and `keep` record a decision; `s` and `baseline` record
 "skipped". There is no follow timestamp in the Bluesky API, so this is
 tracked locally.
 
