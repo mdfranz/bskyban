@@ -43,6 +43,8 @@ func newTestApp(t *testing.T) (*app, *fakePDS) {
 			kind := "block"
 			if strings.HasSuffix(body.Collection, ".follow") {
 				kind = "follow"
+			} else if strings.HasSuffix(body.Collection, ".post") {
+				kind = "post"
 			}
 			f.log(kind)
 			fmt.Fprintf(w, `{"uri":"at://did:me/%s/rk%d"}`, body.Collection, n)
@@ -60,6 +62,8 @@ func newTestApp(t *testing.T) (*app, *fakePDS) {
 			f.mu.Unlock()
 			if strings.HasSuffix(body.Collection, ".follow") {
 				f.log("unfollow")
+			} else if strings.HasSuffix(body.Collection, ".post") {
+				f.log("delete-post")
 			} else {
 				f.log("unblock")
 			}

@@ -111,7 +111,14 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 | `b` | block the author | block the author |
 | `f` | follow the author | follow the author |
 | `k` / `u` | keep / undo | keep / undo |
+| `n` | write a new post | write a new post |
+| `d` | delete your own post (press twice) | delete your own post (press twice) |
 | `Tab` | switch tab | switch tab |
+
+`n` opens a box for a new post (`Enter` publishes, `Esc` discards; 300 characters, with a
+counter). A failed post keeps your text so you can retry. Once posted, it is pulled in at
+the top of the list. `d` on one of your own posts asks for a second `d`, then deletes it.
+Both are written to the audit log (`tui:following`).
 
 Blocking someone you follow asks you to press `b` a second time. More of the
 timeline loads as you near the end.
@@ -142,12 +149,18 @@ bskyban block [--dry-run] <handle|did>...     # "-" reads identifiers from stdin
 bskyban keep <handle|did>...
 bskyban unblock [--dry-run] <handle|did>...
 bskyban follow [--dry-run] <handle|did>...
+bskyban post [--dry-run] <text>...            # "-" reads the text from stdin
+bskyban posts [--list [-n 20] [--json]]       # browse your own posts (TUI), or print them
 bskyban unfollow [--dry-run] <handle|did>...
+bskyban delete-post [--dry-run] <post>...     # at:// URI, bsky.app link or record key
 bskyban baseline
 ```
 
 - `list` prints new followers; `--backlog` adds skipped ones, `--all` lists everyone with their status.
 - `baseline` marks every current unreviewed follower as old, so only followers who arrive afterwards show up by default. Run it once if you don't want to work through your existing backlog.
+- `post` publishes a text post (max 300 characters; URLs become links). It is logged in the audit log like other actions.
+- `posts` opens the feed browser limited to your own posts (`n` writes one, `d` deletes the selected one). With `--list` (or `--json`) it prints your latest `-n` posts instead, each with the record key `delete-post` takes.
+- `delete-post` deletes your own posts, given as the `at://` URI, the `bsky.app` link or just the record key (the last part of the link). Anyone else's post is refused.
 - Exit codes: `0` ok, `1` error, `2` usage.
 
 Example: dry-run blocking everyone with no posts that follows over 1000 accounts:
@@ -160,7 +173,7 @@ bskyban list --json \
 
 ## Audit log
 
-Every block, unblock, keep, skip, undo and `baseline` is appended to
+Every block, unblock, post, keep, skip, undo and `baseline` is appended to
 `~/.local/state/bskyban/audit.jsonl` (`$XDG_STATE_HOME/bskyban/` if set): one JSON
 object per line, never rewritten, readable only by you (`0600`). Failed API calls and
 `--dry-run` runs are logged too, flagged as such. It holds no password or token.

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -17,6 +18,7 @@ import (
 const (
 	blockCollection  = "app.bsky.graph.block"
 	followCollection = "app.bsky.graph.follow"
+	postCollection   = "app.bsky.feed.post"
 )
 
 // Profile is the subset of app.bsky.actor.defs#profileView(Detailed) we use.
@@ -442,6 +444,27 @@ func (c *Client) GetTimeline(ctx context.Context, cursor string, limit int) ([]F
 	return items, next, nil
 }
 
+// GetOwnPosts returns one page of your own posts and replies (not your reposts
+// of other people's posts), newest first, plus the cursor for the next page.
+func (c *Client) GetOwnPosts(ctx context.Context, cursor string, limit int) ([]FeedItem, string, error) {
+	q := url.Values{"actor": {c.DID}, "limit": {fmt.Sprint(limit)}, "filter": {"posts_with_replies"}}
+	if cursor != "" {
+		q.Set("cursor", cursor)
+	}
+	entries, next, err := c.feedPage(ctx, "app.bsky.feed.getAuthorFeed", q)
+	if err != nil {
+		return nil, "", err
+	}
+	items := make([]FeedItem, 0, len(entries))
+	for _, e := range entries {
+		if e.isRepost() {
+			continue
+		}
+		items = append(items, FeedItem{Post: e.toPost(), Author: e.Post.Author, URI: e.Post.URI})
+	}
+	return items, next, nil
+}
+
 // Repost is a post someone you follow reposted, with its original author.
 type Repost struct {
 	Post   Post
@@ -492,6 +515,49 @@ func (c *Client) createSubjectRecord(ctx context.Context, collection, did string
 		},
 	}, &out)
 	return out.URI, err
+}
+
+// maxPostGraphemes is Bluesky's post length limit.
+const maxPostGraphemes = 300
+
+var urlRE = regexp.MustCompile(`https?://[^\s]+`)
+
+// linkFacets marks URLs in text as links (offsets are UTF-8 byte positions),
+// since Bluesky doesn't linkify plain text on its own.
+func linkFacets(text string) []map[string]any {
+	var out []map[string]any
+	for _, m := range urlRE.FindAllStringIndex(text, -1) {
+		end := m[0] + len(strings.TrimRight(text[m[0]:m[1]], ".,;:!?)]\"'"))
+		out = append(out, map[string]any{
+			"index":    map[string]int{"byteStart": m[0], "byteEnd": end},
+			"features": []map[string]string{{"$type": "app.bsky.richtext.facet#link", "uri": text[m[0]:end]}},
+		})
+	}
+	return out
+}
+
+// Post publishes a text post to your account and returns its AT URI.
+func (c *Client) Post(ctx context.Context, text string) (string, error) {
+	rec := map[string]any{
+		"$type":     postCollection,
+		"text":      text,
+		"createdAt": time.Now().UTC().Format(time.RFC3339),
+	}
+	if f := linkFacets(text); len(f) > 0 {
+		rec["facets"] = f
+	}
+	var out struct {
+		URI string `json:"uri"`
+	}
+	err := c.do(ctx, http.MethodPost, "com.atproto.repo.createRecord", nil, map[string]any{
+		"repo": c.DID, "collection": postCollection, "record": rec,
+	}, &out)
+	return out.URI, err
+}
+
+// DeletePost deletes the post at uri from your account.
+func (c *Client) DeletePost(ctx context.Context, uri string) error {
+	return c.deleteRecord(ctx, postCollection, uri)
 }
 
 // deleteRecord removes the record at uri (at://did/collection/rkey) from your repo.

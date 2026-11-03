@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/rivo/uniseg"
 )
 
 var errUsage = errors.New("usage")
@@ -32,6 +33,9 @@ Usage:
   bskyban block [--dry-run] <handle|did>... (use - to read from stdin)
   bskyban keep <handle|did>...
   bskyban unblock [--dry-run] <handle|did>...
+  bskyban posts [--list [-n 20] [--json]]  browse your own posts (TUI), or print them
+  bskyban post [--dry-run] <text>...    publish a post (use - to read the text from stdin)
+  bskyban delete-post [--dry-run] <post>...  delete your own posts (at:// URI, bsky.app link or rkey)
   bskyban follow [--dry-run] <handle|did>...
   bskyban unfollow [--dry-run] <handle|did>...
 
@@ -145,6 +149,10 @@ func (a *app) run(ctx context.Context, cmd string, args []string) error {
 		return a.cmdBaseline(ctx)
 	case "show":
 		return a.cmdShow(ctx, args)
+	case "post":
+		return a.cmdPost(ctx, args)
+	case "delete-post":
+		return a.cmdDeletePost(ctx, args)
 	case "block", "keep", "unblock", "follow", "unfollow":
 		return a.cmdAct(ctx, cmd, args)
 	}
@@ -283,6 +291,179 @@ func (a *app) cmdAct(ctx context.Context, cmd string, args []string) error {
 		return fmt.Errorf("%d of %d failed", failed, len(ids))
 	}
 	return nil
+}
+
+// cmdPostsList prints up to n of your own posts, newest first, with the record
+// key that delete-post accepts.
+func (a *app) cmdPostsList(ctx context.Context, n int, asJSON bool) error {
+	enc := json.NewEncoder(a.stdout)
+	cursor := ""
+	for printed := 0; printed < n; {
+		items, next, err := a.c.GetOwnPosts(ctx, cursor, min(max(n-printed, 1), 100))
+		if err != nil {
+			return err
+		}
+		for _, it := range items {
+			if printed++; printed > n {
+				break
+			}
+			rkey := it.URI[strings.LastIndex(it.URI, "/")+1:]
+			if asJSON {
+				_ = enc.Encode(map[string]any{"uri": it.URI, "rkey": rkey, "createdAt": it.Post.CreatedAt, "text": it.Post.Text})
+				continue
+			}
+			line := fmt.Sprintf("%-14s %s", rkey, formatPost(it.Post, 0))
+			if tw := termWidth(a.stdout); tw > 0 {
+				line = truncateWidth(line, tw-1)
+			}
+			fmt.Fprintln(a.stdout, line)
+		}
+		if next == "" {
+			break
+		}
+		cursor = next
+	}
+	return nil
+}
+
+// cmdPost publishes a text post; the text is the arguments joined by spaces,
+// or all of stdin when the only argument is "-".
+func (a *app) cmdPost(ctx context.Context, args []string) (err error) {
+	fs := newFlagSet("post")
+	dry := fs.Bool("dry-run", false, "")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%w: %v", errUsage, err)
+	}
+	var text string
+	if rest := fs.Args(); len(rest) == 1 && rest[0] == "-" {
+		b, err := io.ReadAll(a.stdin)
+		if err != nil {
+			return err
+		}
+		text = string(b)
+	} else {
+		text = strings.Join(rest, " ")
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return fmt.Errorf("%w: post needs some text", errUsage)
+	}
+	if n := uniseg.GraphemeClusterCount(text); n > maxPostGraphemes {
+		return fmt.Errorf("post is %d characters; the limit is %d", n, maxPostGraphemes)
+	}
+	ev := AuditEvent{Action: "post", DID: a.c.DID, DryRun: *dry, Detail: truncateWidth(strings.Join(strings.Fields(text), " "), 200)}
+	defer func() {
+		ev.OK = err == nil
+		if err != nil {
+			ev.Error = err.Error()
+		}
+		a.record(ev)
+	}()
+	if *dry {
+		fmt.Fprintf(a.stdout, "[dry-run] would post (%d characters):\n%s\n", uniseg.GraphemeClusterCount(text), terminalText(text))
+		return nil
+	}
+	uri, err := a.c.Post(ctx, text)
+	if err != nil {
+		return err
+	}
+	ev.Record = uri
+	fmt.Fprintf(a.stdout, "posted %s\n", postURL(uri))
+	return nil
+}
+
+// cmdDeletePost deletes your own posts, each given as an at:// URI, a
+// bsky.app post link, or a bare record key.
+func (a *app) cmdDeletePost(ctx context.Context, args []string) error {
+	fs := newFlagSet("delete-post")
+	dry := fs.Bool("dry-run", false, "")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%w: %v", errUsage, err)
+	}
+	if fs.NArg() == 0 {
+		return fmt.Errorf("%w: delete-post needs at least one post", errUsage)
+	}
+	var failed int
+	for _, ref := range fs.Args() {
+		if err := a.deletePost(ctx, ref, *dry); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", terminalText(ref), err)
+			failed++
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d failed", failed, fs.NArg())
+	}
+	return nil
+}
+
+func (a *app) deletePost(ctx context.Context, ref string, dry bool) (err error) {
+	ev := AuditEvent{Action: "delete-post", DID: a.c.DID, DryRun: dry, Detail: truncateWidth(terminalText(ref), 200)}
+	defer func() {
+		ev.OK = err == nil
+		if err != nil {
+			ev.Error = err.Error()
+		}
+		a.record(ev)
+	}()
+	uri, err := a.postURI(ctx, ref)
+	if err != nil {
+		return err
+	}
+	ev.Record = uri
+	if dry {
+		fmt.Fprintf(a.stdout, "[dry-run] would delete post %s\n", postURL(uri))
+		return nil
+	}
+	if err := a.c.DeletePost(ctx, uri); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.stdout, "deleted post %s\n", postURL(uri))
+	return nil
+}
+
+// postURI resolves ref to the AT URI of one of your own posts.
+func (a *app) postURI(ctx context.Context, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	var actor, rkey string
+	switch {
+	case strings.HasPrefix(ref, "at://"):
+		parts := strings.Split(strings.TrimPrefix(ref, "at://"), "/")
+		if len(parts) != 3 || parts[1] != postCollection {
+			return "", fmt.Errorf("%w: not a post URI", errUsage)
+		}
+		actor, rkey = parts[0], parts[2]
+	case strings.HasPrefix(ref, "https://"):
+		parts := strings.Split(strings.TrimPrefix(ref, "https://"), "/")
+		if len(parts) < 5 || parts[0] != "bsky.app" || parts[1] != "profile" || parts[3] != "post" {
+			return "", fmt.Errorf("%w: not a bsky.app post link", errUsage)
+		}
+		actor, rkey = parts[2], parts[4]
+	case ref != "" && !strings.ContainsAny(ref, "/:"):
+		actor, rkey = a.c.DID, ref
+	default:
+		return "", fmt.Errorf("%w: expected an at:// URI, bsky.app link or record key", errUsage)
+	}
+	if !strings.HasPrefix(actor, "did:") {
+		p, err := a.c.GetProfile(ctx, normalizeActor(actor))
+		if err != nil {
+			return "", err
+		}
+		actor = p.DID
+	}
+	if actor != a.c.DID {
+		return "", errors.New("that post isn't yours; only your own posts can be deleted")
+	}
+	return "at://" + actor + "/" + postCollection + "/" + rkey, nil
+}
+
+// postURL turns at://did/app.bsky.feed.post/rkey into its bsky.app link.
+func postURL(uri string) string {
+	if i := strings.LastIndex(uri, "/"); i >= 0 && strings.HasPrefix(uri, "at://") {
+		if parts := strings.Split(strings.TrimPrefix(uri, "at://"), "/"); len(parts) == 3 {
+			return "https://bsky.app/profile/" + parts[0] + "/post/" + uri[i+1:]
+		}
+	}
+	return uri
 }
 
 func (a *app) act(ctx context.Context, cmd, id string, dry bool) (err error) {

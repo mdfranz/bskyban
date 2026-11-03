@@ -97,6 +97,21 @@ func realMain() int {
 			fm.refresh, fm.backlog = *refresh, *backlog
 			err = runTUI(fm)
 		}
+	} else if cmd == "posts" {
+		fs := newFlagSet("posts")
+		list := fs.Bool("list", false, "")
+		asJSON := fs.Bool("json", false, "")
+		n := fs.Int("n", 20, "")
+		if err := fs.Parse(args); err != nil {
+			return fail(fmt.Errorf("%w: %v", errUsage, err))
+		}
+		if *list || *asJSON {
+			err = a.cmdPostsList(ctx, *n, *asJSON)
+		} else {
+			err = runTUI(newPostsModel(a, func(ctx context.Context, cursor string) ([]FeedItem, string, error) {
+				return a.c.GetOwnPosts(ctx, cursor, 50)
+			}))
+		}
 	} else if cmd == "review" {
 		fs := newFlagSet("review")
 		since := fs.Int("since", 0, "")

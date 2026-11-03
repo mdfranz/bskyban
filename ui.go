@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/rivo/uniseg"
 )
 
 var (
@@ -60,6 +62,15 @@ type (
 		posts []Post
 		err   error
 	}
+	postedMsg struct {
+		text string
+		uri  string
+		err  error
+	}
+	deletedMsg struct {
+		item FeedItem
+		err  error
+	}
 	actMsg struct {
 		undo   undoEntry
 		isUndo bool
@@ -109,6 +120,9 @@ type model struct {
 	refresh       time.Duration // how often to check for new posts; 0 = never
 	backlog       bool          // include skipped accounts when adding repost authors
 
+	composing bool            // writing a new post (feed mode)
+	input     textinput.Model // the post being written
+
 	busy     bool
 	quitting bool    // wait for the active action to be saved and audited
 	pending  *actMsg // remote action completed, local save needs retrying
@@ -151,6 +165,19 @@ func newFeedModel(a *app, load loadFunc, tl timelineFunc) model {
 	m.timeline = tl
 	m.tabs = []tabID{tabFollowing, tabCandidates}
 	m.followLoading = true
+	m.input = textinput.New()
+	m.input.Prompt = ""
+	m.input.Placeholder = "What's up?"
+	return m
+}
+
+// newPostsModel is the feed browser limited to your own posts, with n to write
+// one and d to delete the selected one.
+func newPostsModel(a *app, tl timelineFunc) model {
+	m := newFeedModel(a, func(context.Context) ([]Profile, map[string]repostCtx, error) { return nil, nil, nil }, tl)
+	m.title = "posts"
+	m.tabs = []tabID{tabFollowing}
+	m.loading = false
 	return m
 }
 
@@ -424,8 +451,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case actMsg:
 		return m.applyAct(msg)
+	case postedMsg:
+		return m.applyPosted(msg)
+	case deletedMsg:
+		return m.applyDeleted(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	default:
+		if m.composing { // cursor blink
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			return m, cmd
+		}
 	}
 	return m, nil
 }
@@ -582,6 +619,9 @@ func (m model) auditEvents(msg actMsg) []AuditEvent {
 
 func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := k.String()
+	if m.composing {
+		return m.composeKey(k)
+	}
 	switch key {
 	case "q", "ctrl+c":
 		if m.pending != nil {
@@ -605,6 +645,11 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.confirm = ""
 	if m.busy {
 		return m, nil
+	}
+	if key == "n" && m.timeline != nil {
+		m.composing, m.status, m.err = true, "", nil
+		m.input.SetValue("")
+		return m, m.input.Focus()
 	}
 	if key == "R" && m.timeline != nil {
 		if len(m.newPosts) > 0 {
@@ -630,6 +675,139 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	m.scroll = m.clampScroll(m.scroll)
 	return m, cmd
+}
+
+// composeKey edits the post being written: enter publishes it, esc discards it.
+func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	key := k.String()
+	if key == "ctrl+c" {
+		if m.busy {
+			m.quitting = true
+			m.status = "finishing action before quitting…"
+			return m, nil
+		}
+		return m, tea.Quit
+	}
+	if m.busy {
+		return m, nil
+	}
+	switch key {
+	case "esc":
+		m.composing, m.err = false, nil
+		m.input.Blur()
+		return m, nil
+	case "enter":
+		text := strings.TrimSpace(m.input.Value())
+		if text == "" {
+			return m, nil
+		}
+		if n := uniseg.GraphemeClusterCount(text); n > maxPostGraphemes {
+			m.err = fmt.Errorf("post is %d characters; the limit is %d", n, maxPostGraphemes)
+			return m, nil
+		}
+		m.busy, m.err = true, nil
+		c := m.a.c
+		return m, func() tea.Msg {
+			uri, err := c.Post(context.Background(), text)
+			return postedMsg{text: text, uri: uri, err: err}
+		}
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(k)
+	m.err = nil
+	return m, cmd
+}
+
+// applyPosted logs a finished post and pulls it into the timeline.
+func (m model) applyPosted(msg postedMsg) (tea.Model, tea.Cmd) {
+	m.busy = false
+	ev := AuditEvent{Action: "post", DID: m.a.c.DID, Source: "tui:following", OK: msg.err == nil, Record: msg.uri,
+		Detail: truncateWidth(strings.Join(strings.Fields(msg.text), " "), 200)}
+	if msg.err != nil {
+		ev.Error = msg.err.Error()
+		m.audit(ev)
+		m.err = msg.err // the text stays in the box so nothing typed is lost
+		m.quitting = false
+		return m, nil
+	}
+	m.audit(ev)
+	m.composing = false
+	m.input.Blur()
+	m.input.SetValue("")
+	if m.quitting && m.err == nil {
+		return m, tea.Quit
+	}
+	m.quitting = false
+	m, cmd := m.startCheck(true) // shows the new post at the top
+	m.status = "posted " + postURL(msg.uri)
+	return m, cmd
+}
+
+// ownItem is the selected timeline post when it is yours.
+func (m model) ownItem() (FeedItem, bool) {
+	if m.active() != tabFollowing || m.cur >= len(m.items) {
+		return FeedItem{}, false
+	}
+	it := m.items[m.cur]
+	return it, it.Author.DID == m.a.c.DID && it.URI != ""
+}
+
+// deleteKey deletes your own selected post, after a second press of d.
+func (m model) deleteKey(confirm string) (model, tea.Cmd) {
+	it, ok := m.ownItem()
+	if !ok {
+		if m.active() == tabFollowing && m.timeline != nil {
+			m.status = "you can only delete your own posts"
+		}
+		return m, nil
+	}
+	if confirm != "del:"+it.URI {
+		m.confirm = "del:" + it.URI
+		m.status = "Press d again to delete this post."
+		return m, nil
+	}
+	m.busy, m.err = true, nil
+	c := m.a.c
+	return m, func() tea.Msg {
+		return deletedMsg{item: it, err: c.DeletePost(context.Background(), it.URI)}
+	}
+}
+
+// applyDeleted logs a deletion and drops the post from the list.
+func (m model) applyDeleted(msg deletedMsg) (tea.Model, tea.Cmd) {
+	m.busy = false
+	it := msg.item
+	ev := AuditEvent{Action: "delete-post", DID: m.a.c.DID, Source: "tui:following", OK: msg.err == nil, Record: it.URI,
+		Detail: truncateWidth(strings.Join(strings.Fields(it.Post.Text), " "), 200)}
+	if msg.err != nil {
+		ev.Error = msg.err.Error()
+		m.audit(ev)
+		m.err = msg.err
+		m.quitting = false
+		return m, nil
+	}
+	m.audit(ev)
+	keep := func(items []FeedItem) []FeedItem {
+		return slices.DeleteFunc(slices.Clone(items), func(x FeedItem) bool { return x.URI == it.URI })
+	}
+	removedBefore := 0
+	for i, x := range m.items {
+		if x.URI == it.URI && i < m.cur {
+			removedBefore++
+		}
+	}
+	m.items, m.newPosts = keep(m.items), keep(m.newPosts)
+	m.cur = min(max(m.cur-removedBefore, 0), max(len(m.items)-1, 0))
+	if len(m.items) == 0 {
+		m.inPost = false
+	}
+	m.listTop, m.scroll = min(m.listTop, m.cur), 0
+	m = m.ensureVisible()
+	m.status = "deleted post"
+	if m.quitting {
+		return m, tea.Quit
+	}
+	return m, m.prefetch()
 }
 
 // scrollKeys handles ↑/↓/PgUp/PgDn for the right panel.
@@ -732,6 +910,8 @@ func (m model) browseKey(key, confirm string) (model, tea.Cmd) {
 		m = m.ensureVisible()
 	case "u":
 		return m.undo()
+	case "d":
+		return m.deleteKey(confirm)
 	case "k", "b", "f":
 		p, ok := m.subject()
 		if !ok {
@@ -1076,7 +1256,11 @@ func (m model) scrollPos() string {
 
 func (m model) tabBar() string {
 	if len(m.tabs) == 1 {
-		return titleStyle.Render("bskyban "+m.title) + m.scrollPos()
+		title := titleStyle.Render("bskyban " + m.title)
+		if n := len(m.newPosts); n > 0 {
+			title += fmt.Sprintf(" (+%d new)", n)
+		}
+		return title + m.scrollPos()
 	}
 	parts := []string{titleStyle.Render("bskyban")}
 	for i, t := range m.tabs {
@@ -1107,6 +1291,9 @@ func (m model) hintItems() []string {
 	if m.pending != nil {
 		return []string{"r retry saving (actions and quit wait for a successful save)"}
 	}
+	if m.composing {
+		return []string{"enter post", "esc cancel"}
+	}
 	var items []string
 	switch {
 	case m.active() == tabCandidates:
@@ -1120,7 +1307,10 @@ func (m model) hintItems() []string {
 		items = append(items, "tab switch")
 	}
 	if m.timeline != nil {
-		items = append(items, "R refresh")
+		if _, own := m.ownItem(); own {
+			items = append(items, "d delete")
+		}
+		items = append(items, "n new post", "R refresh")
 	}
 	return append(items, "q quit")
 }
@@ -1157,6 +1347,10 @@ func (m model) hint() string { return strings.Join(m.hintLines(), "\n") }
 func (m model) View() string {
 	var b strings.Builder
 	b.WriteString(m.tabBar() + "\n\n")
+	if m.composing {
+		b.WriteString(m.composeView())
+		return b.String()
+	}
 	switch m.active() {
 	case tabCandidates:
 		switch {
@@ -1190,6 +1384,33 @@ func (m model) View() string {
 		b.WriteString(dimStyle.Render("loading more…") + "\n")
 	case m.status != "":
 		b.WriteString(warnStyle.Render(m.status) + "\n")
+	}
+	b.WriteString(styleLinesJoin(m.hintLines(), dimStyle) + "\n")
+	return b.String()
+}
+
+// composeView is the new-post screen: the text box, a length counter and any error.
+func (m model) composeView() string {
+	var b strings.Builder
+	b.WriteString(headingStyle.Render("New post") + "\n\n")
+	in := m.input
+	if m.width > 6 {
+		in.Width = m.width - 4
+	}
+	b.WriteString(in.View() + "\n\n")
+	n := uniseg.GraphemeClusterCount(in.Value())
+	count := fmt.Sprintf("%d/%d", n, maxPostGraphemes)
+	if n > maxPostGraphemes {
+		count = errStyle.Render(count)
+	} else {
+		count = dimStyle.Render(count)
+	}
+	b.WriteString(count + "\n\n")
+	if m.err != nil {
+		b.WriteString(errStyle.Render("error: "+terminalText(m.err.Error())) + "\n")
+	}
+	if m.busy {
+		b.WriteString(m.spin.View() + " posting…\n")
 	}
 	b.WriteString(styleLinesJoin(m.hintLines(), dimStyle) + "\n")
 	return b.String()
