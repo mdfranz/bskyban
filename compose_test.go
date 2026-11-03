@@ -171,3 +171,59 @@ func TestLikeTogglesAndMarksEveryCopy(t *testing.T) {
 		t.Errorf("calls=%q likes=%q/%q", f.joined(), m.items[0].Like, m.items[1].Like)
 	}
 }
+
+func TestLikeAndReplyOnTheRepostedPostInTheRepostsTab(t *testing.T) {
+	m, f := feedWithTimeline(t)
+	m.tab = 1 // Reposts
+	author := Profile{DID: "did:rando", Handle: "rando.bsky.social"}
+	item := FeedItem{Author: author, URI: "at://did:rando/app.bsky.feed.post/9", CID: "cid9", Post: Post{Text: "buy now"}}
+	m.list = []Profile{author}
+	m.ctxs = map[string]repostCtx{"did:rando": {Post: item.Post, Item: item, By: []string{"friend.bsky.social"}}}
+	m = step(m, key("L"))
+	if f.joined() != "like" || m.ctxs["did:rando"].Item.Like == "" {
+		t.Fatalf("calls=%q err=%v", f.joined(), m.err)
+	}
+	if v := m.View(); !strings.Contains(v, "you liked this") {
+		t.Errorf("view:\n%s", v)
+	}
+	next, _ := m.Update(key("r"))
+	m = next.(model)
+	if !m.composing || m.replyTo == nil || m.replyTo.URI != item.URI {
+		t.Fatalf("r should reply to the reposted post: %+v", m.replyTo)
+	}
+}
+
+func TestUpDownStepThroughPostsInPostView(t *testing.T) {
+	m, _ := followingModel(t)
+	m = press(m, "enter")
+	m = press(m, "down")
+	if m.cur != 1 || !m.inPost {
+		t.Fatalf("down should open the next post: cur=%d inPost=%v", m.cur, m.inPost)
+	}
+	m = press(m, "up")
+	if m.cur != 0 {
+		t.Errorf("up should go back: cur=%d", m.cur)
+	}
+	m = press(m, "pgdown")
+	if m.cur != 0 || m.scroll < 0 {
+		t.Errorf("pgdown scrolls the panel, not the posts: cur=%d", m.cur)
+	}
+}
+
+func TestCurrentPostIsMarkedAndNotRepeatedInRecentPosts(t *testing.T) {
+	m, _ := followingModel(t)
+	m = press(m, "enter")
+	older := Post{Text: "older one", CreatedAt: "2026-11-01T01:00:00Z"}
+	pp := []Post{m.items[0].Post, older}
+	m.posts["did:friend"] = &pp
+	v := oscRe.ReplaceAllString(m.View(), "")
+	if !strings.Contains(v, "▸ This post · 1 of 2") {
+		t.Errorf("current post not marked:\n%s", v)
+	}
+	if n := strings.Count(v, "hello world"); n != 1 {
+		t.Errorf("current post shown %d times:\n%s", n, v)
+	}
+	if !strings.Contains(v, "older one") {
+		t.Errorf("other recent posts missing:\n%s", v)
+	}
+}

@@ -23,7 +23,7 @@ const usageText = `bskyban - review and block Bluesky followers
 
 Usage:
   bskyban [review] [--since N] [--backlog]   interactive TUI (new followers only)
-  bskyban feed [--pages N] [--backlog] [--refresh 30s] [--list [--json]]
+  bskyban feed [--pages N] [--backlog] [--refresh 30s] [--fancy] [--list [--json]]
                                         review authors of reposts in your timeline
   bskyban list [--since N] [--backlog] [--all] [--json]
   bskyban log [--since 7d] [--action block] [--who handle] [-n 50] [--json]
@@ -33,7 +33,7 @@ Usage:
   bskyban block [--dry-run] <handle|did>... (use - to read from stdin)
   bskyban keep <handle|did>...
   bskyban unblock [--dry-run] <handle|did>...
-  bskyban posts [--list [-n 20] [--json]]  browse your own posts (TUI), or print them
+  bskyban posts [--refresh 30s] [--fancy] [--list [-n 20] [--json]]  browse your own posts (TUI), or print them
   bskyban post [--dry-run] <text>...    publish a post (use - to read the text from stdin)
   bskyban delete-post [--dry-run] <post>...  delete your own posts (at:// URI, bsky.app link or rkey)
   bskyban like [--dry-run] <post>...    like posts (at:// URI or bsky.app link)
@@ -47,6 +47,7 @@ Environment:
   BSKYBAN_STATE                    optional state file (default ~/.local/state/bskyban/state.json)
   BSKYBAN_AUDIT                    optional audit log (default ~/.local/state/bskyban/audit.jsonl)
   XDG_STATE_HOME                   moves the default state directory
+  BSKYBAN_FANCY                    1 = same as --fancy (highlight newly inserted posts)
 `
 
 type app struct {
@@ -90,6 +91,7 @@ func (a *app) isNew(p Profile, backlog bool) bool {
 // repostCtx records how a candidate reached your timeline.
 type repostCtx struct {
 	Post Post
+	Item FeedItem // the reposted post, for liking or replying to it
 	By   []string // handles of people you follow who reposted them
 }
 
@@ -109,7 +111,7 @@ func (a *app) feedCandidates(ctx context.Context, pages int, backlog bool) ([]Pr
 		cur, seen := rc[r.Author.DID]
 		if !seen {
 			out = append(out, r.Author)
-			cur.Post = r.Post
+			cur.Post, cur.Item = r.Post, r.Item
 			cur.Post.Repost = false // shown as the original post, under "Reposted by"
 		}
 		if !slices.Contains(cur.By, r.By.Handle) {

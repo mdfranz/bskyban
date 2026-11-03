@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -78,6 +79,7 @@ func realMain() int {
 		list := fs.Bool("list", false, "")
 		asJSON := fs.Bool("json", false, "")
 		refresh := fs.Duration("refresh", 30*time.Second, "")
+		fancy := fs.Bool("fancy", false, "")
 		if err := fs.Parse(args); err != nil {
 			return fail(fmt.Errorf("%w: %v", errUsage, err))
 		}
@@ -95,6 +97,7 @@ func realMain() int {
 					return a.c.GetTimeline(ctx, cursor, 50)
 				})
 			fm.refresh, fm.backlog = *refresh, *backlog
+			fm.fancy = *fancy || envOn("BSKYBAN_FANCY")
 			err = runTUI(fm)
 		}
 	} else if cmd == "posts" {
@@ -102,15 +105,23 @@ func realMain() int {
 		list := fs.Bool("list", false, "")
 		asJSON := fs.Bool("json", false, "")
 		n := fs.Int("n", 20, "")
+		refresh := fs.Duration("refresh", 30*time.Second, "")
+		fancy := fs.Bool("fancy", false, "")
 		if err := fs.Parse(args); err != nil {
 			return fail(fmt.Errorf("%w: %v", errUsage, err))
+		}
+		if *refresh != 0 && *refresh < minRefresh {
+			return fail(fmt.Errorf("%w: --refresh must be 0 (off) or at least %s", errUsage, minRefresh))
 		}
 		if *list || *asJSON {
 			err = a.cmdPostsList(ctx, *n, *asJSON)
 		} else {
-			err = runTUI(newPostsModel(a, func(ctx context.Context, cursor string) ([]FeedItem, string, error) {
+			pm := newPostsModel(a, func(ctx context.Context, cursor string) ([]FeedItem, string, error) {
 				return a.c.GetOwnPosts(ctx, cursor, 50)
-			}))
+			})
+			pm.refresh = *refresh
+			pm.fancy = *fancy || envOn("BSKYBAN_FANCY")
+			err = runTUI(pm)
 		}
 	} else if cmd == "review" {
 		fs := newFlagSet("review")
@@ -130,6 +141,15 @@ func realMain() int {
 		return fail(err)
 	}
 	return 0
+}
+
+// envOn reports whether the environment variable is set to 1, true or yes.
+func envOn(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
 }
 
 func fail(err error) int {

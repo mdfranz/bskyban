@@ -512,6 +512,7 @@ func (c *Client) GetOwnPosts(ctx context.Context, cursor string, limit int) ([]F
 
 // Repost is a post someone you follow reposted, with its original author.
 type Repost struct {
+	Item   FeedItem // the reposted post itself, for liking or replying to it
 	Post   Post
 	Author Profile // original author
 	By     Profile // who reposted it
@@ -533,7 +534,7 @@ func (c *Client) GetTimelineReposts(ctx context.Context, pages int) ([]Repost, e
 		}
 		for _, e := range entries {
 			if e.isRepost() {
-				reposts = append(reposts, Repost{Post: e.toPost(), Author: e.Post.Author, By: e.Reason.By})
+				reposts = append(reposts, Repost{Item: e.item(), Post: e.toPost(), Author: e.Post.Author, By: e.Reason.By})
 			}
 		}
 		if next == "" || len(entries) == 0 {

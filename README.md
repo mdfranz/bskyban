@@ -50,6 +50,7 @@ export BSKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
 | `BSKYBAN_STATE` | decisions file, default `~/.local/state/bskyban/state.json` |
 | `BSKYBAN_AUDIT` | audit log, default `~/.local/state/bskyban/audit.jsonl` |
 | `XDG_STATE_HOME` | moves the default state directory |
+| `BSKYBAN_FANCY` | `1` turns on `--fancy` for `feed` and `posts` |
 
 ## TUI
 
@@ -95,6 +96,7 @@ further decisions and quitting wait until the save succeeds.
 bskyban feed                 # TUI with two tabs: Following and Reposts
 bskyban feed --pages 5       # scan more of the timeline for the Reposts tab (100 items/page, default 3)
 bskyban feed --refresh 1m    # check for new posts every minute (default 30s, 0 = off, minimum 10s)
+bskyban feed --fancy         # highlight newly inserted posts (or BSKYBAN_FANCY=1)
 bskyban feed --list [--json] # print the Reposts candidates instead
 ```
 
@@ -104,7 +106,8 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 
 | Key | List | Post view |
 |---|---|---|
-| `↑` / `↓`, `PgUp` / `PgDn` | move | scroll |
+| `↑` / `↓` | move | previous / next post |
+| `PgUp` / `PgDn` | move a page | scroll the panel |
 | `Enter` / `→` | open post | next post |
 | `Esc` / `Backspace` | | back to list |
 | `←` | | previous post |
@@ -128,9 +131,11 @@ Blocking someone you follow asks you to press `b` a second time. More of the
 timeline loads as you near the end.
 
 **New posts.** Every `--refresh` interval (30s by default) it quietly checks for new
-posts. They are *not* inserted while you read: the header just shows
-`Following (+3 new)`, so the list never shifts under you. Press `R` to insert them at
-the top; the post you were on stays selected (from the very top of the list, the
+posts. If you are on the first post of the list they are added straight away and the
+newest becomes the selection. Otherwise they are *not* inserted while you read: the
+header just shows `Following (+3 new)`, so the list never shifts under you. Press `R` to
+insert them at the top (with `--fancy`, inserted posts get a coloured bar and a `new`
+tag that fade out over about 2 seconds); the post you were on stays selected (from the very top of the list, the
 newest post is selected instead). `R` also refreshes right away if nothing is waiting.
 Newly reposted authors you haven't handled are added to the end of the Reposts queue
 (its count grows) without moving the account you're reviewing. A failed check shows
@@ -184,6 +189,9 @@ Every block, unblock, post, keep, skip, undo and `baseline` is appended to
 `~/.local/state/bskyban/audit.jsonl` (`$XDG_STATE_HOME/bskyban/` if set): one JSON
 object per line, never rewritten, readable only by you (`0600`). Failed API calls and
 `--dry-run` runs are logged too, flagged as such. It holds no password or token.
+Feed-mode refresh checks that fail are logged too (action `refresh`, with the error): a
+background failure once when it starts or its error changes, a failed manual `R` every time.
+`bskyban log --action refresh` shows them.
 
 Each entry has the time, action, account (DID and handle), where the action came
 from (`cli`, `tui:review`, `tui:following`, `tui:reposts`), who reposted the account

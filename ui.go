@@ -46,6 +46,7 @@ type (
 		err    error
 	}
 	refreshTickMsg struct{}
+	animTickMsg    struct{} // redraw while a new-post highlight fades (fancy mode)
 	newItemsMsg    struct {
 		items  []FeedItem // newest first, none of them already shown or pending
 		gap    bool       // more new posts than one check looks at
@@ -127,6 +128,12 @@ type model struct {
 	refresh       time.Duration // how often to check for new posts; 0 = never
 	backlog       bool          // include skipped accounts when adding repost authors
 
+	// fancy mode: posts that refresh inserts are highlighted for freshFor
+	fancy     bool
+	fresh     map[string]time.Time // FeedItem.key() -> when it was inserted
+	animating bool                 // an animTickMsg is scheduled
+	now       func() time.Time
+
 	composing bool            // writing a new post (feed mode)
 	replyTo   *FeedItem       // ...as an answer to this post
 	input     textinput.Model // the post being written
@@ -164,6 +171,7 @@ func newModel(a *app, title string, load loadFunc) model {
 		a: a, title: title, candLabel: label, loader: load, loading: true, spin: sp,
 		tabs:     []tabID{tabCandidates},
 		profiles: map[string]*Profile{}, posts: map[string]*[]Post{}, records: map[string]string{},
+		fresh: map[string]time.Time{}, now: time.Now,
 	}
 }
 
@@ -279,6 +287,41 @@ func (m model) startCheck(manual bool) (model, tea.Cmd) {
 	}
 }
 
+// readingTop reports whether you are on the first post of the Following list, with
+// nothing open or being written, so new posts can be added without moving anything you read.
+func (m model) readingTop() bool {
+	return m.active() == tabFollowing && m.cur == 0 && m.listTop == 0 && !m.inPost && !m.composing && !m.busy
+}
+
+// freshFor is how long a newly inserted post stays highlighted in fancy mode.
+const freshFor = 2 * time.Second
+
+// freshRamp is the highlight's colour from bright to faded (256-colour codes).
+var freshRamp = []string{"213", "177", "141", "105", "69", "61", "60", "59", "238"}
+
+// startAnim schedules the next highlight redraw while anything is still fading.
+func (m model) startAnim() (model, tea.Cmd) {
+	if len(m.fresh) == 0 || m.animating {
+		return m, nil
+	}
+	m.animating = true
+	return m, tea.Tick(80*time.Millisecond, func(time.Time) tea.Msg { return animTickMsg{} })
+}
+
+// freshStyle is the highlight for a post inserted at t, or false once it has faded.
+func (m model) freshStyle(key string) (lipgloss.Style, bool) {
+	t, ok := m.fresh[key]
+	if !ok {
+		return lipgloss.Style{}, false
+	}
+	age := m.now().Sub(t)
+	if age >= freshFor {
+		return lipgloss.Style{}, false
+	}
+	i := min(int(age*time.Duration(len(freshRamp))/freshFor), len(freshRamp)-1)
+	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(freshRamp[i])), true
+}
+
 // applyPending inserts the held-back posts at the top of the list. The post you
 // are on stays selected, unless you are at the very top of the list, where the
 // newest post becomes the selection.
@@ -290,6 +333,12 @@ func (m model) applyPending() model {
 	}
 	atTop := m.cur == 0 && m.listTop == 0 && !m.inPost
 	m.items = append(append([]FeedItem{}, m.newPosts...), m.items...)
+	if m.fancy {
+		t := m.now()
+		for _, it := range m.newPosts {
+			m.fresh[it.key()] = t
+		}
+	}
 	if !atTop {
 		m.cur += n
 		m.listTop += n
@@ -318,7 +367,8 @@ func (m model) mergeCandidates(items []FeedItem) model {
 		rc, seen := m.ctxs[it.Author.DID]
 		if !seen {
 			m.list = append(m.list, it.Author)
-			rc.Post = it.Post
+			rc.Post, rc.Item = it.Post, it
+			rc.Item.By = ""
 		}
 		if !slices.Contains(rc.By, it.By) {
 			rc.By = append(rc.By, it.By)
@@ -410,6 +460,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.list, m.ctxs = msg.list, msg.ctxs
 		return m, m.prefetch()
+	case animTickMsg:
+		m.animating = false
+		for k, t := range m.fresh {
+			if m.now().Sub(t) >= freshFor {
+				delete(m.fresh, k)
+			}
+		}
+		return m.startAnim()
 	case refreshTickMsg:
 		next, check := m.startCheck(false)
 		return next, tea.Batch(m.nextTick(), check)
@@ -418,6 +476,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		manual := msg.manual || m.applyWhenDone
 		m.applyWhenDone = false
 		if msg.err != nil {
+			// A background check retries every interval; log a failure when it starts or
+			// changes, not once per tick while the same problem persists.
+			repeat := m.refreshErr != nil && m.refreshErr.Error() == msg.err.Error()
+			if manual || !repeat {
+				detail := "background check"
+				if manual {
+					detail = "manual refresh (R)"
+				}
+				m.audit(AuditEvent{Action: "refresh", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following",
+					Detail: detail, Error: msg.err.Error()})
+			}
 			if manual {
 				m.err = fmt.Errorf("refresh: %w", msg.err)
 			} else {
@@ -429,9 +498,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.newPosts = append(append([]FeedItem{}, msg.items...), m.newPosts...)
 		m.newGap = m.newGap || msg.gap
 		m = m.mergeCandidates(msg.items)
-		if manual {
+		if manual || m.readingTop() {
 			m = m.applyPending()
-			return m, m.prefetch()
+			m, anim := m.startAnim()
+			return m, tea.Batch(m.prefetch(), anim)
 		}
 		return m, nil
 	case followingMsg:
@@ -661,7 +731,7 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.SetValue("")
 		return m, m.input.Focus()
 	}
-	if key == "r" && m.timeline != nil && m.active() == tabFollowing {
+	if key == "r" && m.timeline != nil {
 		it, ok := m.selected()
 		if !ok {
 			return m, nil
@@ -670,14 +740,15 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.SetValue("")
 		return m, m.input.Focus()
 	}
-	if key == "L" && m.timeline != nil && m.active() == tabFollowing {
+	if key == "L" && m.timeline != nil {
 		return m.likeKey()
 	}
 	if key == "R" && m.timeline != nil {
 		if len(m.newPosts) > 0 {
 			m = m.applyPending() // what the header announced; no need to wait for or start a check
 			m.scroll = 0
-			return m, m.prefetch()
+			m, anim := m.startAnim()
+			return m, tea.Batch(m.prefetch(), anim)
 		}
 		return m.startCheck(true)
 	}
@@ -807,6 +878,12 @@ func (m model) applyLiked(msg likedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.audit(ev)
+	for did, rc := range m.ctxs {
+		if rc.Item.URI == it.URI {
+			rc.Item.Like = msg.like
+			m.ctxs[did] = rc
+		}
+	}
 	for _, list := range [][]FeedItem{m.items, m.newPosts} {
 		for i := range list {
 			if list[i].URI == it.URI {
@@ -826,6 +903,13 @@ func (m model) applyLiked(msg likedMsg) (tea.Model, tea.Cmd) {
 
 // selected is the timeline post under the cursor.
 func (m model) selected() (FeedItem, bool) {
+	if m.active() == tabCandidates { // the reposted post of the account on screen
+		if m.loading || m.idx >= len(m.list) {
+			return FeedItem{}, false
+		}
+		it := m.ctxs[m.list[m.idx].DID].Item
+		return it, it.URI != ""
+	}
 	if m.cur >= len(m.items) {
 		return FeedItem{}, false
 	}
@@ -886,6 +970,11 @@ func (m model) applyDeleted(msg deletedMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.items, m.newPosts = keep(m.items), keep(m.newPosts)
+	for k := range m.fresh {
+		if strings.HasPrefix(k, it.URI+"|") {
+			delete(m.fresh, k)
+		}
+	}
 	m.cur = min(max(m.cur-removedBefore, 0), max(len(m.items)-1, 0))
 	if len(m.items) == 0 {
 		m.inPost = false
@@ -956,10 +1045,9 @@ func (m model) candKey(key string) (model, tea.Cmd) {
 }
 
 func (m model) browseKey(key, confirm string) (model, tea.Cmd) {
-	if m.inPost {
-		if next, ok := m.scrollKeys(key); ok {
-			return next, nil
-		}
+	if m.inPost && (key == "pgup" || key == "pgdown") { // ↑ ↓ step through posts, like in the list
+		next, _ := m.scrollKeys(key)
+		return next, nil
 	}
 	setCur := func(i int) {
 		m.cur = min(max(i, 0), max(len(m.items)-1, 0))
@@ -1264,7 +1352,25 @@ func (m model) profilePanel(cw int, pos string) []string {
 }
 
 // recentLines lists the account's latest posts in full.
-func (m model) recentLines(did string, cw int) []string {
+// currentPost marks the post you are on: a heading and an accent bar down its side,
+// so it stands apart from the author's other posts listed below it.
+func currentPost(title string, p Post, it FeedItem, cw int) []string {
+	lines := []string{headingStyle.Render("▸ " + title)}
+	bar := accentStyle.Render("┃ ")
+	for _, l := range renderPost(p, max(cw-2, 10), true) {
+		if l == "" {
+			continue
+		}
+		lines = append(lines, bar+l)
+	}
+	if it.Like != "" {
+		lines = append(lines, bar+errStyle.Render("♥ you liked this"))
+	}
+	return append(lines, "", dimStyle.Render(strings.Repeat("─", max(cw-1, 1))), "")
+}
+
+// recentLines lists the author's latest posts, leaving out cur (shown above as the current post).
+func (m model) recentLines(did string, cw int, cur Post) []string {
 	lines := []string{headingStyle.Render("Recent posts"), ""}
 	switch pp := m.posts[did]; {
 	case pp == nil:
@@ -1273,20 +1379,26 @@ func (m model) recentLines(did string, cw int) []string {
 		return append(lines, dimStyle.Render("(no posts)"))
 	default:
 		for _, post := range *pp {
+			if post.CreatedAt == cur.CreatedAt && post.Text == cur.Text {
+				continue
+			}
 			lines = append(lines, renderPost(post, cw, false)...)
 		}
 	}
 	return lines
 }
 
+// rc0 is the reposted post for did, or the zero Post.
+func rc0(ctxs map[string]repostCtx, did string) Post { return ctxs[did].Post }
+
 func (m model) candRight(cw int) []string {
 	p, _ := m.subject()
 	var lines []string
 	if rc, ok := m.ctxs[p.DID]; ok {
 		lines = append(lines, accentStyle.Render("Reposted by @"+strings.Join(rc.By, ", @")), "")
-		lines = append(lines, renderPost(rc.Post, cw, true)...)
+		lines = append(lines, currentPost("Reposted post", rc.Post, rc.Item, cw)...)
 	}
-	return append(lines, m.recentLines(p.DID, cw)...)
+	return append(lines, m.recentLines(p.DID, cw, rc0(m.ctxs, p.DID))...)
 }
 
 func (m model) postRight(cw int) []string {
@@ -1295,11 +1407,8 @@ func (m model) postRight(cw int) []string {
 	if it.By != "" {
 		lines = append(lines, accentStyle.Render("↻ Reposted by @"+it.By), "")
 	}
-	lines = append(lines, renderPost(it.Post, cw, true)...)
-	if it.Like != "" {
-		lines = append(lines, "", errStyle.Render("♥ you liked this"))
-	}
-	return append(lines, m.recentLines(it.Author.DID, cw)...)
+	lines = append(lines, currentPost(fmt.Sprintf("This post · %d of %d", m.cur+1, len(m.items)), it.Post, it, cw)...)
+	return append(lines, m.recentLines(it.Author.DID, cw, it.Post)...)
 }
 
 // window returns n lines of lines starting at off.
@@ -1394,7 +1503,7 @@ func (m model) hintItems() []string {
 	case m.active() == tabCandidates:
 		items = []string{"← → move", "↑ ↓ scroll", "b block", "f follow", "k keep", "s skip", "u undo"}
 	case m.inPost:
-		items = []string{"← → prev/next", "↑ ↓ scroll", "esc back", "b block", "f follow", "k keep", "u undo"}
+		items = []string{"↑ ↓ prev/next", "PgUp PgDn scroll", "esc back", "b block", "f follow", "k keep", "u undo"}
 	default:
 		items = []string{"↑ ↓ move", "enter open", "b block", "f follow", "k keep", "u undo"}
 	}
@@ -1405,9 +1514,7 @@ func (m model) hintItems() []string {
 		if _, own := m.ownItem(); own {
 			items = append(items, "d delete")
 		}
-		if m.active() == tabFollowing {
-			items = append(items, "r reply", "L like")
-		}
+		items = append(items, "r reply", "L like")
 		items = append(items, "n new post", "R refresh")
 	}
 	return append(items, "q quit")
@@ -1597,6 +1704,10 @@ func (m model) itemLines(i, w int) []string {
 	if it.Like != "" {
 		add("♥", errStyle)
 	}
+	fresh, isFresh := m.freshStyle(it.key())
+	if isFresh {
+		add("new", fresh)
+	}
 	switch m.a.st.Entries[it.Author.DID].Decision {
 	case decBlocked:
 		add("blocked", errStyle)
@@ -1622,9 +1733,13 @@ func (m model) itemLines(i, w int) []string {
 			lines = append(lines, selStyle.Width(w).Render("      "+l))
 		}
 	} else {
-		lines = append(lines, fmt.Sprintf("  %s %s %s", dimStyle.Render(fmt.Sprintf("%-5s", age)), titleStyle.Render(who), tail))
+		lead := "  "
+		if isFresh {
+			lead = fresh.Render("┃") + " "
+		}
+		lines = append(lines, fmt.Sprintf("%s%s %s %s", lead, dimStyle.Render(fmt.Sprintf("%-5s", age)), titleStyle.Render(who), tail))
 		for _, l := range body {
-			lines = append(lines, "      "+dimStyle.Render(l))
+			lines = append(lines, lead+"    "+dimStyle.Render(l))
 		}
 	}
 	return append(lines, "")

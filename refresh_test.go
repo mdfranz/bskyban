@@ -65,6 +65,12 @@ func check(t *testing.T, m model, manual bool) model {
 	return next.(model)
 }
 
+// reading is a model whose reader has a post open, so new posts are held back.
+func reading(m model) model {
+	m.inPost = true
+	return m
+}
+
 func uris(items []FeedItem) string {
 	var u []string
 	for _, it := range items {
@@ -162,7 +168,7 @@ func TestCheckWalksBackUntilItOverlaps(t *testing.T) {
 		{post("N2", "n2", ""), post("N1", "n1", "")},
 		{A},
 	}}
-	m := check(t, refreshModel(t, s, A), false)
+	m := check(t, reading(refreshModel(t, s, A)), false)
 	if uris(m.newPosts) != "N4,N3,N2,N1" || m.newGap || s.calls != 3 {
 		t.Errorf("new=%s gap=%v calls=%d", uris(m.newPosts), m.newGap, s.calls)
 	}
@@ -173,7 +179,7 @@ func TestCheckWalksBackUntilItOverlaps(t *testing.T) {
 		pages = append(pages, []FeedItem{post(fmt.Sprintf("P%da", p), "x", ""), post(fmt.Sprintf("P%db", p), "y", "")})
 	}
 	s = &script{pages: pages}
-	m = check(t, refreshModel(t, s, A), false)
+	m = check(t, reading(refreshModel(t, s, A)), false)
 	if !m.newGap || s.calls != checkPages || len(m.newPosts) != 2*checkPages {
 		t.Errorf("gap=%v calls=%d new=%d", m.newGap, s.calls, len(m.newPosts))
 	}
@@ -186,7 +192,7 @@ func TestCheckWalksBackUntilItOverlaps(t *testing.T) {
 func TestSamePostRepostedByTwoPeopleIsTwoEntries(t *testing.T) {
 	A := post("A", "a", "")
 	s := &script{pages: [][]FeedItem{{post("X", "x", "alice.bsky.social"), post("X", "x", "bob.bsky.social"), A}}}
-	m := check(t, refreshModel(t, s, A), false)
+	m := check(t, reading(refreshModel(t, s, A)), false)
 	if len(m.newPosts) != 2 {
 		t.Fatalf("newPosts = %s", uris(m.newPosts))
 	}
@@ -206,9 +212,23 @@ func TestFailedChecks(t *testing.T) {
 	if !strings.Contains(m.View(), "refresh failed") {
 		t.Error("header should show that refreshing failed")
 	}
+	m = check(t, m, false) // same failure again on the next tick
+	logged := func() []AuditEvent {
+		evs, err := ReadAudit(m.a.audit.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return evs
+	}
+	if evs := logged(); len(evs) != 1 || evs[0].Action != "refresh" || evs[0].OK || !strings.Contains(evs[0].Error, "network down") {
+		t.Fatalf("a persisting background failure should be logged once: %+v", evs)
+	}
 	m = check(t, m, true)
 	if m.err == nil || !strings.Contains(m.err.Error(), "network down") {
 		t.Errorf("a manual refresh should report the error: %v", m.err)
+	}
+	if len(logged()) != 2 {
+		t.Errorf("a manual refresh failure is always logged: %d entries", len(logged()))
 	}
 	s.err = nil
 	m.err = nil
@@ -297,7 +317,7 @@ func TestRWhileACheckIsRunning(t *testing.T) {
 	s := &script{pages: [][]FeedItem{{post("N1", "n1", ""), A}}}
 
 	// posts are already waiting and another check is in flight: insert them now
-	m := check(t, refreshModel(t, s, A), false)
+	m := check(t, reading(refreshModel(t, s, A)), false)
 	m.checking = true
 	m = press(m, "R")
 	if uris(m.items) != "N1,A" || m.status != "1 new post" {
@@ -305,7 +325,7 @@ func TestRWhileACheckIsRunning(t *testing.T) {
 	}
 
 	// nothing waiting yet: R waits for the running check and then applies it
-	m = refreshModel(t, s, A)
+	m = reading(refreshModel(t, s, A))
 	m, cmd := m.startCheck(false)
 	m = press(m, "R")
 	if !m.applyWhenDone || uris(m.items) != "A" {
@@ -315,5 +335,27 @@ func TestRWhileACheckIsRunning(t *testing.T) {
 	m = next.(model)
 	if uris(m.items) != "N1,A" || m.applyWhenDone || m.status != "1 new post" {
 		t.Errorf("result should be applied when it lands: items=%s wait=%v status=%q", uris(m.items), m.applyWhenDone, m.status)
+	}
+}
+
+func TestNewPostsInsertThemselvesOnlyAtTheTop(t *testing.T) {
+	A := post("A", "a", "")
+	s := &script{pages: [][]FeedItem{{post("N1", "n1", ""), A}}}
+
+	m := check(t, refreshModel(t, s, A), false) // on the first post of the list
+	if uris(m.items) != "N1,A" || len(m.newPosts) != 0 || m.cur != 0 {
+		t.Errorf("at the top the new post should be added with the newest selected: items=%s held=%s cur=%d", uris(m.items), uris(m.newPosts), m.cur)
+	}
+
+	m = check(t, reading(refreshModel(t, s, A)), false) // reading a post
+	if uris(m.items) != "A" || uris(m.newPosts) != "N1" {
+		t.Errorf("while reading, it must be held back: items=%s held=%s", uris(m.items), uris(m.newPosts))
+	}
+
+	m = refreshModel(t, s, A)
+	m.composing = true
+	m = check(t, m, false)
+	if uris(m.items) != "A" {
+		t.Errorf("not while writing a post: items=%s", uris(m.items))
 	}
 }
