@@ -63,9 +63,16 @@ type (
 		err   error
 	}
 	postedMsg struct {
-		text string
-		uri  string
-		err  error
+		text  string
+		uri   string
+		reply *replyRef
+		err   error
+	}
+	likedMsg struct {
+		item  FeedItem
+		like  string // the like record now in place, "" after an unlike
+		unlik bool
+		err   error
 	}
 	deletedMsg struct {
 		item FeedItem
@@ -121,6 +128,7 @@ type model struct {
 	backlog       bool          // include skipped accounts when adding repost authors
 
 	composing bool            // writing a new post (feed mode)
+	replyTo   *FeedItem       // ...as an answer to this post
 	input     textinput.Model // the post being written
 
 	busy     bool
@@ -455,6 +463,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyPosted(msg)
 	case deletedMsg:
 		return m.applyDeleted(msg)
+	case likedMsg:
+		return m.applyLiked(msg)
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	default:
@@ -647,9 +657,21 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key == "n" && m.timeline != nil {
-		m.composing, m.status, m.err = true, "", nil
+		m.composing, m.replyTo, m.status, m.err = true, nil, "", nil
 		m.input.SetValue("")
 		return m, m.input.Focus()
+	}
+	if key == "r" && m.timeline != nil && m.active() == tabFollowing {
+		it, ok := m.selected()
+		if !ok {
+			return m, nil
+		}
+		m.composing, m.replyTo, m.status, m.err = true, &it, "", nil
+		m.input.SetValue("")
+		return m, m.input.Focus()
+	}
+	if key == "L" && m.timeline != nil && m.active() == tabFollowing {
+		return m.likeKey()
 	}
 	if key == "R" && m.timeline != nil {
 		if len(m.newPosts) > 0 {
@@ -693,7 +715,7 @@ func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "esc":
-		m.composing, m.err = false, nil
+		m.composing, m.replyTo, m.err = false, nil, nil
 		m.input.Blur()
 		return m, nil
 	case "enter":
@@ -707,9 +729,13 @@ func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.busy, m.err = true, nil
 		c := m.a.c
+		var reply *replyRef
+		if m.replyTo != nil {
+			reply = m.replyTo.replyTo()
+		}
 		return m, func() tea.Msg {
-			uri, err := c.Post(context.Background(), text)
-			return postedMsg{text: text, uri: uri, err: err}
+			uri, err := c.Post(context.Background(), text, reply)
+			return postedMsg{text: text, uri: uri, reply: reply, err: err}
 		}
 	}
 	var cmd tea.Cmd
@@ -721,8 +747,11 @@ func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 // applyPosted logs a finished post and pulls it into the timeline.
 func (m model) applyPosted(msg postedMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
-	ev := AuditEvent{Action: "post", DID: m.a.c.DID, Source: "tui:following", OK: msg.err == nil, Record: msg.uri,
+	ev := AuditEvent{Action: "post", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following", OK: msg.err == nil, Record: msg.uri,
 		Detail: truncateWidth(strings.Join(strings.Fields(msg.text), " "), 200)}
+	if msg.reply != nil {
+		ev.Via = "reply to " + msg.reply.Parent.URI
+	}
 	if msg.err != nil {
 		ev.Error = msg.err.Error()
 		m.audit(ev)
@@ -731,7 +760,7 @@ func (m model) applyPosted(msg postedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.audit(ev)
-	m.composing = false
+	m.composing, m.replyTo = false, nil
 	m.input.Blur()
 	m.input.SetValue("")
 	if m.quitting && m.err == nil {
@@ -741,6 +770,66 @@ func (m model) applyPosted(msg postedMsg) (tea.Model, tea.Cmd) {
 	m, cmd := m.startCheck(true) // shows the new post at the top
 	m.status = "posted " + postURL(msg.uri)
 	return m, cmd
+}
+
+// likeKey likes the selected post, or removes your like if you already liked it.
+func (m model) likeKey() (model, tea.Cmd) {
+	it, ok := m.selected()
+	if !ok || it.URI == "" {
+		return m, nil
+	}
+	m.busy, m.err, m.status = true, nil, ""
+	c := m.a.c
+	return m, func() tea.Msg {
+		ctx := context.Background()
+		if it.Like != "" {
+			return likedMsg{item: it, unlik: true, err: c.Unlike(ctx, it.Like)}
+		}
+		uri, err := c.Like(ctx, postRef{it.URI, it.CID})
+		return likedMsg{item: it, like: uri, err: err}
+	}
+}
+
+// applyLiked logs a like or unlike and marks the post (every copy of it) in the lists.
+func (m model) applyLiked(msg likedMsg) (tea.Model, tea.Cmd) {
+	m.busy = false
+	it := msg.item
+	ev := AuditEvent{Action: "like", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following", OK: msg.err == nil,
+		Record: msg.like, Detail: it.URI, Via: "@" + it.Author.Handle}
+	if msg.unlik {
+		ev.Action, ev.Record = "unlike", it.Like
+	}
+	if msg.err != nil {
+		ev.Error = msg.err.Error()
+		m.audit(ev)
+		m.err = msg.err
+		m.quitting = false
+		return m, nil
+	}
+	m.audit(ev)
+	for _, list := range [][]FeedItem{m.items, m.newPosts} {
+		for i := range list {
+			if list[i].URI == it.URI {
+				list[i].Like = msg.like
+			}
+		}
+	}
+	m.status = "liked"
+	if msg.unlik {
+		m.status = "removed your like"
+	}
+	if m.quitting {
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// selected is the timeline post under the cursor.
+func (m model) selected() (FeedItem, bool) {
+	if m.cur >= len(m.items) {
+		return FeedItem{}, false
+	}
+	return m.items[m.cur], true
 }
 
 // ownItem is the selected timeline post when it is yours.
@@ -777,7 +866,7 @@ func (m model) deleteKey(confirm string) (model, tea.Cmd) {
 func (m model) applyDeleted(msg deletedMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	it := msg.item
-	ev := AuditEvent{Action: "delete-post", DID: m.a.c.DID, Source: "tui:following", OK: msg.err == nil, Record: it.URI,
+	ev := AuditEvent{Action: "delete-post", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following", OK: msg.err == nil, Record: it.URI,
 		Detail: truncateWidth(strings.Join(strings.Fields(it.Post.Text), " "), 200)}
 	if msg.err != nil {
 		ev.Error = msg.err.Error()
@@ -1207,6 +1296,9 @@ func (m model) postRight(cw int) []string {
 		lines = append(lines, accentStyle.Render("↻ Reposted by @"+it.By), "")
 	}
 	lines = append(lines, renderPost(it.Post, cw, true)...)
+	if it.Like != "" {
+		lines = append(lines, "", errStyle.Render("♥ you liked this"))
+	}
 	return append(lines, m.recentLines(it.Author.DID, cw)...)
 }
 
@@ -1292,6 +1384,9 @@ func (m model) hintItems() []string {
 		return []string{"r retry saving (actions and quit wait for a successful save)"}
 	}
 	if m.composing {
+		if m.replyTo != nil {
+			return []string{"enter reply", "esc cancel"}
+		}
 		return []string{"enter post", "esc cancel"}
 	}
 	var items []string
@@ -1309,6 +1404,9 @@ func (m model) hintItems() []string {
 	if m.timeline != nil {
 		if _, own := m.ownItem(); own {
 			items = append(items, "d delete")
+		}
+		if m.active() == tabFollowing {
+			items = append(items, "r reply", "L like")
 		}
 		items = append(items, "n new post", "R refresh")
 	}
@@ -1392,7 +1490,16 @@ func (m model) View() string {
 // composeView is the new-post screen: the text box, a length counter and any error.
 func (m model) composeView() string {
 	var b strings.Builder
-	b.WriteString(headingStyle.Render("New post") + "\n\n")
+	if r := m.replyTo; r != nil {
+		b.WriteString(headingStyle.Render("Reply to @"+terminalText(r.Author.Handle)) + "\n")
+		quote := strings.Join(strings.Fields(terminalText(r.Post.Text)), " ")
+		if w := m.width - 4; w > 10 {
+			quote = truncateWidth(quote, w)
+		}
+		b.WriteString(dimStyle.Render("▎ "+quote) + "\n\n")
+	} else {
+		b.WriteString(headingStyle.Render("New post") + "\n\n")
+	}
 	in := m.input
 	if m.width > 6 {
 		in.Width = m.width - 4
@@ -1486,6 +1593,9 @@ func (m model) itemLines(i, w int) []string {
 	}
 	if it.Post.Reply {
 		add("reply", dimStyle)
+	}
+	if it.Like != "" {
+		add("♥", errStyle)
 	}
 	switch m.a.st.Entries[it.Author.DID].Decision {
 	case decBlocked:

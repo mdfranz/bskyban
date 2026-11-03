@@ -36,6 +36,8 @@ Usage:
   bskyban posts [--list [-n 20] [--json]]  browse your own posts (TUI), or print them
   bskyban post [--dry-run] <text>...    publish a post (use - to read the text from stdin)
   bskyban delete-post [--dry-run] <post>...  delete your own posts (at:// URI, bsky.app link or rkey)
+  bskyban like [--dry-run] <post>...    like posts (at:// URI or bsky.app link)
+  bskyban unlike [--dry-run] <post>...
   bskyban follow [--dry-run] <handle|did>...
   bskyban unfollow [--dry-run] <handle|did>...
 
@@ -153,6 +155,8 @@ func (a *app) run(ctx context.Context, cmd string, args []string) error {
 		return a.cmdPost(ctx, args)
 	case "delete-post":
 		return a.cmdDeletePost(ctx, args)
+	case "like", "unlike":
+		return a.cmdLike(ctx, cmd, args)
 	case "block", "keep", "unblock", "follow", "unfollow":
 		return a.cmdAct(ctx, cmd, args)
 	}
@@ -351,7 +355,7 @@ func (a *app) cmdPost(ctx context.Context, args []string) (err error) {
 	if n := uniseg.GraphemeClusterCount(text); n > maxPostGraphemes {
 		return fmt.Errorf("post is %d characters; the limit is %d", n, maxPostGraphemes)
 	}
-	ev := AuditEvent{Action: "post", DID: a.c.DID, DryRun: *dry, Detail: truncateWidth(strings.Join(strings.Fields(text), " "), 200)}
+	ev := AuditEvent{Action: "post", DID: a.c.DID, Handle: a.c.Handle, DryRun: *dry, Detail: truncateWidth(strings.Join(strings.Fields(text), " "), 200)}
 	defer func() {
 		ev.OK = err == nil
 		if err != nil {
@@ -363,7 +367,7 @@ func (a *app) cmdPost(ctx context.Context, args []string) (err error) {
 		fmt.Fprintf(a.stdout, "[dry-run] would post (%d characters):\n%s\n", uniseg.GraphemeClusterCount(text), terminalText(text))
 		return nil
 	}
-	uri, err := a.c.Post(ctx, text)
+	uri, err := a.c.Post(ctx, text, nil)
 	if err != nil {
 		return err
 	}
@@ -397,7 +401,7 @@ func (a *app) cmdDeletePost(ctx context.Context, args []string) error {
 }
 
 func (a *app) deletePost(ctx context.Context, ref string, dry bool) (err error) {
-	ev := AuditEvent{Action: "delete-post", DID: a.c.DID, DryRun: dry, Detail: truncateWidth(terminalText(ref), 200)}
+	ev := AuditEvent{Action: "delete-post", DID: a.c.DID, Handle: a.c.Handle, DryRun: dry, Detail: truncateWidth(terminalText(ref), 200)}
 	defer func() {
 		ev.OK = err == nil
 		if err != nil {
@@ -423,6 +427,19 @@ func (a *app) deletePost(ctx context.Context, ref string, dry bool) (err error) 
 
 // postURI resolves ref to the AT URI of one of your own posts.
 func (a *app) postURI(ctx context.Context, ref string) (string, error) {
+	uri, err := a.resolvePost(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(uri, "at://"+a.c.DID+"/") {
+		return "", errors.New("that post isn't yours; only your own posts can be deleted")
+	}
+	return uri, nil
+}
+
+// resolvePost turns an at:// URI, a bsky.app post link or a bare record key
+// (one of your own posts) into the post's AT URI.
+func (a *app) resolvePost(ctx context.Context, ref string) (string, error) {
 	ref = strings.TrimSpace(ref)
 	var actor, rkey string
 	switch {
@@ -450,10 +467,73 @@ func (a *app) postURI(ctx context.Context, ref string) (string, error) {
 		}
 		actor = p.DID
 	}
-	if actor != a.c.DID {
-		return "", errors.New("that post isn't yours; only your own posts can be deleted")
-	}
 	return "at://" + actor + "/" + postCollection + "/" + rkey, nil
+}
+
+// cmdLike likes or unlikes posts given as at:// URIs or bsky.app links.
+func (a *app) cmdLike(ctx context.Context, cmd string, args []string) error {
+	fs := newFlagSet(cmd)
+	dry := fs.Bool("dry-run", false, "")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%w: %v", errUsage, err)
+	}
+	if fs.NArg() == 0 {
+		return fmt.Errorf("%w: %s needs at least one post", errUsage, cmd)
+	}
+	var failed int
+	for _, ref := range fs.Args() {
+		if err := a.likePost(ctx, cmd, ref, *dry); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", terminalText(ref), err)
+			failed++
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d failed", failed, fs.NArg())
+	}
+	return nil
+}
+
+func (a *app) likePost(ctx context.Context, cmd, ref string, dry bool) (err error) {
+	ev := AuditEvent{Action: cmd, DID: a.c.DID, Handle: a.c.Handle, DryRun: dry, Detail: truncateWidth(terminalText(ref), 200)}
+	defer func() {
+		ev.OK = err == nil
+		if err != nil {
+			ev.Error = err.Error()
+		}
+		a.record(ev)
+	}()
+	uri, err := a.resolvePost(ctx, ref)
+	if err != nil {
+		return err
+	}
+	post, like, err := a.c.GetPost(ctx, uri)
+	if err != nil {
+		return err
+	}
+	prefix := ""
+	if dry {
+		prefix = "[dry-run] would "
+	}
+	switch {
+	case cmd == "like" && like != "":
+		ev.Detail, ev.Record = "already liked", like
+		fmt.Fprintf(a.stdout, "already liked %s\n", postURL(uri))
+	case cmd == "unlike" && like == "":
+		ev.Detail = "not liked"
+		fmt.Fprintf(a.stdout, "you haven't liked %s\n", postURL(uri))
+	case cmd == "like":
+		fmt.Fprintf(a.stdout, "%slike %s\n", prefix, postURL(uri))
+		if !dry {
+			ev.Record, err = a.c.Like(ctx, post)
+		}
+	default:
+		ev.Record = like
+		fmt.Fprintf(a.stdout, "%sunlike %s\n", prefix, postURL(uri))
+		if !dry {
+			err = a.c.Unlike(ctx, like)
+		}
+	}
+	return err
 }
 
 // postURL turns at://did/app.bsky.feed.post/rkey into its bsky.app link.

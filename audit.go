@@ -65,7 +65,7 @@ func snapshotOf(p Profile, detailed bool) *Snapshot {
 // AuditEvent is one line of the audit log.
 type AuditEvent struct {
 	TS       string    `json:"ts"`
-	Action   string    `json:"action"` // block, unblock, follow, unfollow, post, delete-post, keep, skip, undo, baseline
+	Action   string    `json:"action"` // block, unblock, follow, unfollow, post, delete-post, like, unlike, keep, skip, undo, baseline
 	DID      string    `json:"did,omitempty"`
 	Handle   string    `json:"handle,omitempty"`
 	Source   string    `json:"source"`           // cli, tui:review, tui:following, tui:reposts

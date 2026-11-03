@@ -14,7 +14,7 @@ func step(m model, msg tea.Msg) model {
 	m = next.(model)
 	if cmd != nil {
 		switch r := cmd().(type) {
-		case postedMsg, deletedMsg:
+		case postedMsg, deletedMsg, likedMsg:
 			next, _ = m.Update(r)
 			m = next.(model)
 		}
@@ -121,5 +121,53 @@ func TestPostsModelIsAFeedOfYourOwnPosts(t *testing.T) {
 	}
 	if next, _ := m.Update(key("tab")); next.(model).tab != 0 {
 		t.Error("a single-tab model should not switch tabs")
+	}
+}
+
+func TestReplyReferencesParentAndRoot(t *testing.T) {
+	root := postRef{"at://did:x/app.bsky.feed.post/root", "cidroot"}
+	it := FeedItem{URI: "at://did:x/app.bsky.feed.post/p", CID: "cidp", Root: root}
+	if r := it.replyTo(); r.Parent.CID != "cidp" || r.Root != root {
+		t.Errorf("reply to a reply = %+v", r)
+	}
+	top := FeedItem{URI: "at://did:x/app.bsky.feed.post/t", CID: "cidt"}
+	if r := top.replyTo(); r.Root != r.Parent || r.Root.CID != "cidt" {
+		t.Errorf("reply to a top-level post = %+v", r)
+	}
+}
+
+func TestReplyComposeShowsTarget(t *testing.T) {
+	m, f := feedWithTimeline(t)
+	m.items[0].URI, m.items[0].CID = "at://did:friend/app.bsky.feed.post/1", "cid1"
+	next, _ := m.Update(key("r"))
+	m = next.(model)
+	if !m.composing || m.replyTo == nil {
+		t.Fatal("r should open a reply")
+	}
+	if v := m.View(); !strings.Contains(v, "Reply to @friend.bsky.social") || !strings.Contains(v, "hello world") {
+		t.Errorf("view:\n%s", v)
+	}
+	m = typeText(m, "thanks")
+	m = step(m, key("enter"))
+	if m.composing || f.joined() != "post" {
+		t.Errorf("composing=%v calls=%q err=%v", m.composing, f.joined(), m.err)
+	}
+}
+
+func TestLikeTogglesAndMarksEveryCopy(t *testing.T) {
+	m, f := feedWithTimeline(t)
+	uri := "at://did:rando/app.bsky.feed.post/9"
+	m.items[0].URI, m.items[0].CID = uri, "cid9"
+	m.items[1].URI, m.items[1].CID = uri, "cid9" // the same post, reposted
+	m = step(m, key("L"))
+	if f.joined() != "like" || m.items[0].Like == "" || m.items[1].Like == "" {
+		t.Fatalf("calls=%q likes=%q/%q err=%v", f.joined(), m.items[0].Like, m.items[1].Like, m.err)
+	}
+	if v := m.View(); !strings.Contains(v, "♥") {
+		t.Errorf("liked post should show ♥:\n%s", v)
+	}
+	m = step(m, key("L"))
+	if f.joined() != "like,unlike" || m.items[0].Like != "" || m.items[1].Like != "" {
+		t.Errorf("calls=%q likes=%q/%q", f.joined(), m.items[0].Like, m.items[1].Like)
 	}
 }
