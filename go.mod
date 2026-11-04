@@ -1,6 +1,6 @@
 module github.com/mdfranz/bskyban
 
-go 1.26.1
+go 1.26.10
 
 require (
 	github.com/charmbracelet/bubbles v1.0.0

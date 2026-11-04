@@ -33,13 +33,13 @@ people and has 5 followers, with templated replies.
 
 ## Install
 
-Requires Go 1.26+ (see `go.mod`).
+Requires Go 1.26.10 or newer (see `go.mod`).
 
 ```sh
 git clone https://github.com/mdfranz/bskyban
 cd bskyban
 make build        # produces ./bskyban
-# or: go install github.com/mdfranz/bskyban@latest
+# or: go install github.com/mdfranz/bskyban/cmd/bskyban@latest
 ```
 
 ## Setup
@@ -282,13 +282,30 @@ make smoke   # live, read-only CLI check against your account (see below)
 make run ARGS="--since 10"
 ```
 
+### Project layout
+
+```
+cmd/bskyban/        entry point: flag parsing and wiring
+internal/bsky/      Bluesky (XRPC) client and the types it returns
+internal/store/     decisions file and audit log
+internal/app/       logic shared by the TUI and the subcommands
+internal/tui/       Bubble Tea terminal UI, link picker, themes
+internal/cli/       the non-TUI subcommands and the log command
+internal/termtext/  sanitizing, hyperlinks and wrapping for terminal text
+internal/testpds/   fake Bluesky server for tests
+scripts/smoke.sh    live, read-only check against your account
+docs/screenshots/   images used in this README
+```
+
+See `ARCHITECTURE.md` for how the pieces fit together and `PKG.md` for dependencies.
+
 Talks to the AT Protocol XRPC API directly over `net/http` (no SDK):
 `createSession`, `getFollowers`, `getProfile(s)`, `getAuthorFeed`, and
 `createRecord`/`deleteRecord` for `app.bsky.graph.block`.
 
 ### Smoke test
 
-`./smoke.sh` (or `make smoke`) runs the real CLI against your real account to check
+`./scripts/smoke.sh` (or `make smoke`) runs the real CLI against your real account to check
 that login, listing, `show`, the feed, local state and the audit log all work. It
 **does not change your account**: `block` and `unblock` only ever run with
 `--dry-run` (the script's wrapper aborts if anything else is attempted), the
