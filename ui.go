@@ -742,7 +742,7 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.SetValue("")
 		return m, m.input.Focus()
 	}
-	if key == "L" && m.timeline != nil {
+	if key == "h" && m.timeline != nil { // h for heart; in feed mode the arrow keys move left
 		return m.likeKey()
 	}
 	if key == "o" && m.timeline != nil {
@@ -1037,6 +1037,9 @@ func (m model) candKey(key string) (model, tea.Cmd) {
 	case "left", "h":
 		return move(m.idx - 1)
 	case "right", "l":
+		if key == "l" && m.timeline != nil {
+			return m, nil // in the feed h is the heart, so l goes too; use the arrow keys
+		}
 		return move(m.idx + 1)
 	case "home":
 		return move(0)
@@ -1090,7 +1093,7 @@ func (m model) browseKey(key, confirm string) (model, tea.Cmd) {
 		if m.inPost {
 			setCur(m.cur - 1)
 		}
-	case "right", "l":
+	case "right":
 		if m.inPost {
 			setCur(m.cur + 1)
 		} else if len(m.items) > 0 {
@@ -1566,7 +1569,7 @@ func (m model) hintItems() []string {
 		if _, own := m.ownItem(); own {
 			items = append(items, "d delete")
 		}
-		items = append(items, "r reply", "L like", "o open link")
+		items = append(items, "r reply", "h like", "o open link")
 		if _, ok := m.postImages(); ok {
 			items = append(items, "i open images")
 		}

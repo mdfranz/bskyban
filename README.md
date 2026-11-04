@@ -143,12 +143,16 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 | `f` | follow the author | follow the author |
 | `k` / `u` | keep / undo | keep / undo |
 | `r` | reply to the selected post | reply to this post |
-| `L` | like (again to remove your like) | like / unlike |
+| `h` | like (again to remove your like) | like / unlike |
 | `o` | pick a link in the post to open | pick a link in the post to open |
 | `i` | open the post's images in your browser | open the post's images in your browser |
 | `n` | write a new post | write a new post |
 | `d` | delete your own post (press twice) | delete your own post (press twice) |
 | `Tab` | switch tab | switch tab |
+| `R` | check for new posts / insert them | check for new posts / insert them |
+| `q` | quit | quit |
+
+In the feed `h` is the heart and `l` does nothing: use the arrow keys to move. The vim-style `h`/`l` pair only applies to the follower review above.
 
 `o` numbers every link in the selected post along the bottom: the post on bsky.app, its link
 card, URLs in its text, the quoted post, mentioned accounts and the author's profile. Press

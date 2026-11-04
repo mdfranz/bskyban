@@ -117,14 +117,14 @@ func TestPostViewShowsEngagementAndLink(t *testing.T) {
 		t.Error("open post should link to the post on bsky.app")
 	}
 
-	m = step(m, key("L"))
+	m = step(m, key("h"))
 	if f.joined() != "like" || m.items[0].Stats.Likes != 121 {
 		t.Fatalf("liking should count you: calls=%q likes=%d", f.joined(), m.items[0].Stats.Likes)
 	}
 	if v := ansiRe.ReplaceAllString(m.View(), ""); !strings.Contains(v, "♥ 121 likes (you liked this)") {
 		t.Errorf("liked stats missing:\n%s", v)
 	}
-	m = step(m, key("L"))
+	m = step(m, key("h"))
 	if m.items[0].Stats.Likes != 120 {
 		t.Errorf("unliking should take you off again: %d", m.items[0].Stats.Likes)
 	}
