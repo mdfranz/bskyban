@@ -35,8 +35,9 @@ type Profile struct {
 	FollowsCount   int    `json:"followsCount"`
 	PostsCount     int    `json:"postsCount"`
 	Viewer         struct {
-		Blocking  string `json:"blocking"`
-		Following string `json:"following"` // set if you follow them
+		Blocking   string `json:"blocking"`
+		Following  string `json:"following"`  // set if you follow them
+		FollowedBy string `json:"followedBy"` // set if they follow you
 	} `json:"viewer"`
 }
 

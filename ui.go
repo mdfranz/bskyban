@@ -1361,10 +1361,22 @@ func (m model) profilePanel(cw int, pos string) []string {
 		lines = append(lines, dimStyle.Render(fmt.Sprintf("%-12s", label))+" "+val)
 	}
 	row("Account age", humanAge(p.Age()))
+	if t, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
+		row("Joined", t.Format("2006-01-02"))
+	}
 	row("Avatar", avatar)
 	row("Posts", fmt.Sprint(p.PostsCount))
 	row("Followers", fmt.Sprint(p.FollowersCount))
 	row("Following", fmt.Sprint(p.FollowsCount))
+	if days := p.Age().Hours() / 24; days >= 1 {
+		row("Posts/day", fmt.Sprintf("%.1f", float64(p.PostsCount)/days))
+	}
+	if p.FollowsCount > 0 {
+		row("Fol. ratio", fmt.Sprintf("%.1f", float64(p.FollowersCount)/float64(p.FollowsCount)))
+	}
+	if p.Viewer.FollowedBy != "" {
+		row("Relation", "follows you")
+	}
 	lines = append(lines, "")
 	if bio := strings.TrimSpace(p.Description); bio != "" {
 		return append(lines, wrapText(bio, cw)...)
