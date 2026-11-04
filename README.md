@@ -122,9 +122,22 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 | `k` / `u` | keep / undo | keep / undo |
 | `r` | reply to the selected post | reply to this post |
 | `L` | like (again to remove your like) | like / unlike |
+| `o` | pick a link in the post to open | pick a link in the post to open |
+| `i` | open the post's images in your browser | open the post's images in your browser |
+| `I` | view the post's images here (`--fancy`) | view the post's images here (`--fancy`) |
 | `n` | write a new post | write a new post |
 | `d` | delete your own post (press twice) | delete your own post (press twice) |
 | `Tab` | switch tab | switch tab |
+
+`o` numbers every link in the selected post along the bottom: the post on bsky.app, its link
+card, URLs in its text, the quoted post, mentioned accounts and the author's profile. Press
+`1`–`9` to open one, `o` again for the post's only outside link (or the post itself when
+there are none or several), or any other key to close it.
+
+`i` opens a post's images (`▣`) in your browser: `$BROWSER` if set (on ChromeOS Linux
+that is `garcon-url-handler`, which opens Chrome), otherwise `xdg-open`. With `--fancy`, `I` shows
+them full screen in the terminal with [chafa](https://hpjansson.org/chafa/)
+(`sudo apt install chafa`), one per screen: `Enter` for the next, `q` `Enter` to go back.
 
 `r` opens the same box as a reply to the selected post, showing what you are answering
 (the reply is placed in the right thread, even when the post is itself a reply).

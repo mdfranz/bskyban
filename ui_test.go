@@ -536,7 +536,7 @@ func TestListShowsUpToThreeLinesOfEachPost(t *testing.T) {
 	m.items = []FeedItem{
 		{Author: Profile{DID: "1", Handle: "long.bsky.social"}, Post: Post{Text: long}},
 		{Author: Profile{DID: "2", Handle: "short.bsky.social"}, Post: Post{Text: "just one line"}},
-		{Author: Profile{DID: "3", Handle: "img.bsky.social"}, Post: Post{Attach: []string{"[1 image] alt: a cat"}}},
+		{Author: Profile{DID: "3", Handle: "img.bsky.social"}, Post: Post{Attach: []string{"▣ a cat"}}},
 	}
 	m.items = append(m.items, FeedItem{Author: Profile{DID: "4", Handle: "quote.bsky.social"},
 		Post: Post{Text: "look", Quote: "@q.bsky.social: first line\n\nsecond line\n\nthird"}})
@@ -559,7 +559,7 @@ func TestListShowsUpToThreeLinesOfEachPost(t *testing.T) {
 	if strings.Count(v, "alpha") < 3*2 { // at least three full lines of text
 		t.Errorf("expected three lines of preview text:\n%s", v)
 	}
-	if !strings.Contains(v, "[1 image] alt: a cat") {
+	if !strings.Contains(v, "▣ a cat") {
 		t.Error("attachments should show in the preview of a text-less post")
 	}
 }

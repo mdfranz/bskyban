@@ -249,3 +249,23 @@ func TestListAgeLinksToThePost(t *testing.T) {
 		t.Errorf("no link without a post URI: %q", h)
 	}
 }
+
+func TestMediaMarkers(t *testing.T) {
+	for raw, want := range map[string]string{
+		`{"$type":"app.bsky.embed.images","images":[{"alt":"a  cat"}]}`:            "▣ a cat",
+		`{"$type":"app.bsky.embed.images","images":[{"alt":""},{"alt":"map"},{}]}`: "▣×3 map",
+		`{"$type":"app.bsky.embed.images","images":[{}]}`:                          "▣",
+		`{"$type":"app.bsky.embed.video","alt":"clip"}`:                            "▶ video clip",
+	} {
+		if got := describeEmbed(json.RawMessage(raw)); len(got) != 1 || got[0] != want {
+			t.Errorf("%s: got %q, want %q", raw, got, want)
+		}
+	}
+	for _, text := range []string{"aaaa bbbb ▣×3 county map", "aaaa bbbb ▶ video clip"} {
+		for _, l := range wrapText(text, 10) {
+			if strings.HasSuffix(l, "▣×3") || strings.HasSuffix(l, "▶") {
+				t.Errorf("marker stranded at a line end: %q", wrapText(text, 10))
+			}
+		}
+	}
+}

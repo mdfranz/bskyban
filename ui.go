@@ -134,6 +134,7 @@ type model struct {
 	animating bool                 // an animTickMsg is scheduled
 	now       func() time.Time
 
+	picking   []pickLink      // links offered by o, until one is chosen or it closes
 	composing bool            // writing a new post (feed mode)
 	replyTo   *FeedItem       // ...as an answer to this post
 	input     textinput.Model // the post being written
@@ -535,6 +536,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyDeleted(msg)
 	case likedMsg:
 		return m.applyLiked(msg)
+	case imagesMsg:
+		return m.showImages(msg)
+	case imagesDoneMsg:
+		if msg.err != nil {
+			m.err = fmt.Errorf("image viewer: %w", msg.err)
+		}
+		if m.quitting {
+			return m, tea.Quit
+		}
+		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	default:
@@ -702,6 +713,9 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.composing {
 		return m.composeKey(k)
 	}
+	if m.picking != nil && key != "ctrl+c" {
+		return m.pickKey(key)
+	}
 	switch key {
 	case "q", "ctrl+c":
 		if m.pending != nil {
@@ -742,6 +756,15 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if key == "L" && m.timeline != nil {
 		return m.likeKey()
+	}
+	if key == "o" && m.timeline != nil {
+		return m.openKey()
+	}
+	if key == "i" && m.timeline != nil {
+		return m.openImagesKey()
+	}
+	if key == "I" && m.timeline != nil && m.fancy { // in-terminal images are part of --fancy mode
+		return m.chafaKey()
 	}
 	if key == "R" && m.timeline != nil {
 		if len(m.newPosts) > 0 {
@@ -1533,6 +1556,9 @@ func (m model) hintItems() []string {
 	if m.pending != nil {
 		return []string{"r retry saving (actions and quit wait for a successful save)"}
 	}
+	if m.picking != nil {
+		return []string{"1-" + fmt.Sprint(len(m.picking)) + " open", "o default", "any other key closes"}
+	}
 	if m.composing {
 		if m.replyTo != nil {
 			return []string{"enter reply", "esc cancel"}
@@ -1555,20 +1581,28 @@ func (m model) hintItems() []string {
 		if _, own := m.ownItem(); own {
 			items = append(items, "d delete")
 		}
-		items = append(items, "r reply", "L like")
+		items = append(items, "r reply", "L like", "o open link")
+		if _, ok := m.postImages(); ok {
+			items = append(items, "i open images")
+			if m.fancy {
+				items = append(items, "I view here")
+			}
+		}
 		items = append(items, "n new post", "R refresh")
 	}
 	return append(items, "q quit")
 }
 
 // hintLines lays the hints out on one line if they fit, otherwise wraps them.
-func (m model) hintLines() []string {
-	items := m.hintItems()
-	if m.width <= 0 {
+func (m model) hintLines() []string { return wrapItems(m.hintItems(), m.width) }
+
+// wrapItems lays items out on one line if they fit in width, otherwise wraps them.
+func wrapItems(items []string, width int) []string {
+	if width <= 0 {
 		return []string{strings.Join(items, " · ")}
 	}
 	for _, sep := range []string{" · ", "  "} {
-		if h := strings.Join(items, sep); lipgloss.Width(h) <= m.width {
+		if h := strings.Join(items, sep); lipgloss.Width(h) <= width {
 			return []string{h}
 		}
 	}
@@ -1578,7 +1612,7 @@ func (m model) hintLines() []string {
 		switch {
 		case cur == "":
 			cur = it
-		case lipgloss.Width(cur)+2+lipgloss.Width(it) <= m.width:
+		case lipgloss.Width(cur)+2+lipgloss.Width(it) <= width:
 			cur += "  " + it
 		default:
 			lines = append(lines, cur)
@@ -1612,6 +1646,8 @@ func (m model) View() string {
 		bottom = append(bottom, m.spin.View()+" working…")
 	case m.moreBusy:
 		bottom = append(bottom, dimStyle.Render("loading more…"))
+	case m.picking != nil:
+		bottom = append(bottom, warnStyle.Render(strings.Join(m.pickerLines(), "\n")))
 	case m.status != "" && !m.composing:
 		bottom = append(bottom, warnStyle.Render(m.status))
 	}

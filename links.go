@@ -112,12 +112,17 @@ func splitWord(word string) []piece {
 	return out
 }
 
-// gluePrefixes joins a lone marker such as the link card's "↗" to the word after
-// it, so a line break never leaves the marker stranded at the end of a line.
+// gluePrefixes joins a lone marker (the link card's "↗", "▶" for video, "▣" or
+// "▣×3" for images) to the word after it, so a line break never leaves the marker
+// stranded at the end of a line.
 func gluePrefixes(words []string) []string {
+	isMark := func(w string) bool {
+		return w == "↗" || w == videoMark || w == imageMark ||
+			(strings.HasPrefix(w, imageMark+"×") && strings.Trim(w[len(imageMark+"×"):], "0123456789") == "")
+	}
 	out := words[:0:0]
 	for i := 0; i < len(words); i++ {
-		if words[i] == "↗" && i+1 < len(words) {
+		if isMark(words[i]) && i+1 < len(words) {
 			out = append(out, words[i]+" "+words[i+1])
 			i++
 			continue
