@@ -12,14 +12,24 @@ follow counts, bio) next to their recent posts, then choose to block or keep.
 ## Screenshots
 
 **Following** – your home timeline, a few lines per post. Reposts are tagged with who
-reposted them; `Enter` opens a post in full.
+reposted them; `Enter` opens a post in full. The key hints along the bottom show what each
+key does (`o` open link, `h` like, `r` reply, `n` new post).
 
 ![The Following tab: timeline posts with author, age and up to three lines of text each](docs/screenshots/following-list.png)
 
 **Reposts** – the original author of a reposted post, with their profile on the left and
 the reposted post and their recent posts on the right. Block, keep or skip with one key.
+The profile shows account age, join date, avatar, post, follower and following counts,
+posts per day and follower/following ratio, which together make new spam accounts easy to
+spot.
 
-![The Reposts tab: an account's profile beside the post that was reposted into the timeline](docs/screenshots/reposts-tab.png)
+![The Reposts tab: an account's profile with age, join date, posts per day and follower ratio beside the post that was reposted into the timeline](docs/screenshots/reposts-tab.png)
+
+**Review** – `bskyban review` walks through new followers you don't follow back. A
+"follows you" row confirms the relationship. Here a two-day-old account that follows 112
+people and has 5 followers, with templated replies.
+
+![Follower review: a two-day-old account with 4.9 posts a day and a 0.0 follower ratio next to its recent posts](docs/screenshots/review.png)
 
 ## Install
 
@@ -100,6 +110,12 @@ Following someone records them as `followed`, so they leave the new list. Changi
 mind later works like a block: pressing `k`, `s` or `b` on a followed account removes
 the follow first, and `u` puts it back.
 
+The profile panel shows: account age and join date, whether there is an avatar, post,
+follower and following counts, posts per day (lifetime posts over account age), the
+follower/following ratio, and `follows you` when they follow you. Accounts that are days
+old, post many times a day and follow far more people than follow them are the usual
+spam pattern.
+
 Moving back to a follower you already handled shows what you decided (`● blocked`,
 `● kept`, `● skipped`). Pressing a letter again overrides it: `k` or `s` on a
 blocked account lifts the block, and `u` puts the previous decision back.
@@ -129,7 +145,7 @@ lines, with a quoted post on up to two lines of its own (`▎`). A repost is age
 was reposted (`↻ reposted by @who · written 8m ago` gives the post's own age), and a reply
 names who it answers (`↳ replying to @who`). Each post's age (`4m`) is a clickable link to it on bsky.app. Link previews show as
 `↗ Title https://…`, leaving out whatever the post's text already says; URLs are
-always shown in full so your terminal can open them. Replies right below a post in
+always shown in full so your terminal can open them (in Ghostty on macOS, Cmd+click; press `o` to open links without the mouse). Replies right below a post in
 the same thread are indented beneath it; open one to see it in full (with its like, repost, reply and quote counts and an
 `open post ↗` link to bsky.app) next to its author's profile, including
 the parent of a reply, quoted posts, image links and recent posts by the author.

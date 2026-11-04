@@ -45,8 +45,6 @@ func browserCommand(browser, u string) *exec.Cmd {
 	switch runtime.GOOS {
 	case "darwin":
 		return exec.Command("open", u)
-	case "windows":
-		return exec.Command("rundll32", "url.dll,FileProtocolHandler", u)
 	default:
 		return exec.Command("xdg-open", u)
 	}

@@ -52,8 +52,6 @@ func TestBrowserCommandPrefersBROWSER(t *testing.T) {
 	switch runtime.GOOS {
 	case "darwin":
 		wantDefault = "open " + u
-	case "windows":
-		wantDefault = "rundll32 url.dll,FileProtocolHandler " + u
 	}
 	for browser, want := range map[string]string{
 		"":                              wantDefault,
