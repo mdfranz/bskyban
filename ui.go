@@ -534,16 +534,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyDeleted(msg)
 	case likedMsg:
 		return m.applyLiked(msg)
-	case imagesMsg:
-		return m.showImages(msg)
-	case imagesDoneMsg:
-		if msg.err != nil {
-			m.err = fmt.Errorf("image viewer: %w", msg.err)
-		}
-		if m.quitting {
-			return m, tea.Quit
-		}
-		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
 	default:
@@ -760,9 +750,6 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if key == "i" && m.timeline != nil {
 		return m.openImagesKey()
-	}
-	if key == "I" && m.timeline != nil && m.fancy { // in-terminal images are part of --fancy mode
-		return m.chafaKey()
 	}
 	if key == "R" && m.timeline != nil {
 		if len(m.newPosts) > 0 {
@@ -1582,9 +1569,6 @@ func (m model) hintItems() []string {
 		items = append(items, "r reply", "L like", "o open link")
 		if _, ok := m.postImages(); ok {
 			items = append(items, "i open images")
-			if m.fancy {
-				items = append(items, "I view here")
-			}
 		}
 		items = append(items, "n new post", "R refresh")
 	}

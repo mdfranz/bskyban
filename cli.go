@@ -48,7 +48,7 @@ Environment:
   BSKYBAN_STATE                    optional state file (default ~/.local/state/bskyban/state.json)
   BSKYBAN_AUDIT                    optional audit log (default ~/.local/state/bskyban/audit.jsonl)
   XDG_STATE_HOME                   moves the default state directory
-  BSKYBAN_FANCY                    1 = same as --fancy (highlight new posts, I shows images)
+  BSKYBAN_FANCY                    1 = same as --fancy (highlight newly inserted posts)
   BSKYBAN_THEME                    auto (default), dark, light, ansi, dracula, catppuccin
 `
 
