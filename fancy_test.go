@@ -5,11 +5,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
 // fancyModel is a refresh model at the top of the list with a clock the test controls.
-func fancyModel(t *testing.T, s *script, fancy bool, shown ...FeedItem) (model, *time.Time) {
+func fancyModel(t *testing.T, s *script, fancy bool, shown ...bsky.FeedItem) (model, *time.Time) {
 	m := refreshModel(t, s, shown...)
 	m.fancy = fancy
 	clock := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
@@ -22,7 +23,7 @@ func view(m model) string { return termtext.StripANSI(m.View()) }
 
 func TestFancyOffAddsNoHighlight(t *testing.T) {
 	A := post("A", "a", "")
-	s := &script{pages: [][]FeedItem{{post("N1", "n1", ""), A}}}
+	s := &script{pages: [][]bsky.FeedItem{{post("N1", "n1", ""), A}}}
 	m, _ := fancyModel(t, s, false, A)
 	m = check(t, m, false)
 	if uris(m.items) != "N1,A" || len(m.fresh) != 0 || m.animating {
@@ -38,7 +39,7 @@ func TestFancyOffAddsNoHighlight(t *testing.T) {
 
 func TestFancyHighlightsNewPostsThenFades(t *testing.T) {
 	A := post("A", "a", "")
-	s := &script{pages: [][]FeedItem{{post("N1", "n1", ""), post("N2", "n2", ""), A}}}
+	s := &script{pages: [][]bsky.FeedItem{{post("N1", "n1", ""), post("N2", "n2", ""), A}}}
 	m, clock := fancyModel(t, s, true, A)
 	m, cmd := m.startCheck(false)
 	next, anim := m.Update(cmd())

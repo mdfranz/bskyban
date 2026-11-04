@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
 	"github.com/rivo/uniseg"
 )
@@ -31,47 +32,47 @@ const (
 
 type (
 	loadedMsg struct {
-		list []Profile
+		list []bsky.Profile
 		ctxs map[string]repostCtx
 		err  error
 	}
 	followingMsg struct {
-		items  []FeedItem
+		items  []bsky.FeedItem
 		cursor string
 		err    error
 	}
 	refreshTickMsg struct{}
 	animTickMsg    struct{} // redraw while a new-post highlight fades (fancy mode)
 	newItemsMsg    struct {
-		items  []FeedItem // newest first, none of them already shown or pending
-		gap    bool       // more new posts than one check looks at
+		items  []bsky.FeedItem // newest first, none of them already shown or pending
+		gap    bool            // more new posts than one check looks at
 		manual bool
 		err    error
 	}
 	profileMsg struct {
-		p   *Profile
+		p   *bsky.Profile
 		did string
 		err error
 	}
 	postsMsg struct {
 		did   string
-		posts []Post
+		posts []bsky.Post
 		err   error
 	}
 	postedMsg struct {
 		text  string
 		uri   string
-		reply *replyRef
+		reply *bsky.ReplyRef
 		err   error
 	}
 	likedMsg struct {
-		item  FeedItem
+		item  bsky.FeedItem
 		like  string // the like record now in place, "" after an unlike
 		unlik bool
 		err   error
 	}
 	deletedMsg struct {
-		item FeedItem
+		item bsky.FeedItem
 		err  error
 	}
 	actMsg struct {
@@ -86,7 +87,7 @@ type (
 type undoEntry struct {
 	tab      tabID
 	idx      int
-	profile  Profile
+	profile  bsky.Profile
 	decision string
 	record   string // block/follow record this decision created
 	prev     *Entry // decision recorded before this one
@@ -103,25 +104,25 @@ type model struct {
 
 	// candidates tab
 	ctxs    map[string]repostCtx // how each candidate reached you (feed mode)
-	list    []Profile
+	list    []bsky.Profile
 	idx     int
 	loading bool
 
 	// following tab
-	items         []FeedItem
+	items         []bsky.FeedItem
 	cur           int
 	listTop       int
 	inPost        bool
 	tlCursor      string
 	followLoading bool
 	moreBusy      bool
-	newPosts      []FeedItem    // new posts found by a check, not yet inserted into the list
-	newGap        bool          // ...and there were more than a check could fetch
-	checking      bool          // a check for new posts is in flight
-	applyWhenDone bool          // R was pressed during a check: insert its result when it lands
-	refreshErr    error         // last background check failed
-	refresh       time.Duration // how often to check for new posts; 0 = never
-	backlog       bool          // include skipped accounts when adding repost authors
+	newPosts      []bsky.FeedItem // new posts found by a check, not yet inserted into the list
+	newGap        bool            // ...and there were more than a check could fetch
+	checking      bool            // a check for new posts is in flight
+	applyWhenDone bool            // R was pressed during a check: insert its result when it lands
+	refreshErr    error           // last background check failed
+	refresh       time.Duration   // how often to check for new posts; 0 = never
+	backlog       bool            // include skipped accounts when adding repost authors
 
 	// fancy mode: posts that refresh inserts are highlighted for freshFor
 	fancy     bool
@@ -131,16 +132,16 @@ type model struct {
 
 	picking   []pickLink      // links offered by o, until one is chosen or it closes
 	composing bool            // writing a new post (feed mode)
-	replyTo   *FeedItem       // ...as an answer to this post
+	replyTo   *bsky.FeedItem  // ...as an answer to this post
 	input     textinput.Model // the post being written
 
 	busy     bool
 	quitting bool    // wait for the active action to be saved and audited
 	pending  *actMsg // remote action completed, local save needs retrying
 	spin     spinner.Model
-	profiles map[string]*Profile
-	posts    map[string]*[]Post // nil value = in flight
-	records  map[string]string  // block/follow records behind current decisions (this session)
+	profiles map[string]*bsky.Profile
+	posts    map[string]*[]bsky.Post // nil value = in flight
+	records  map[string]string       // block/follow records behind current decisions (this session)
 	history  []undoEntry
 	confirm  string // DID awaiting a second `b` to block someone you follow
 	scroll   int    // right-panel scroll offset
@@ -151,10 +152,10 @@ type model struct {
 }
 
 // loadFunc returns the candidates to review, plus optional per-candidate context.
-type loadFunc func(ctx context.Context) ([]Profile, map[string]repostCtx, error)
+type loadFunc func(ctx context.Context) ([]bsky.Profile, map[string]repostCtx, error)
 
 // timelineFunc returns one page of the home timeline and the next cursor.
-type timelineFunc func(ctx context.Context, cursor string) ([]FeedItem, string, error)
+type timelineFunc func(ctx context.Context, cursor string) ([]bsky.FeedItem, string, error)
 
 func newModel(a *app, title string, load loadFunc) model {
 	sp := spinner.New()
@@ -166,7 +167,7 @@ func newModel(a *app, title string, load loadFunc) model {
 	return model{
 		a: a, title: title, candLabel: label, loader: load, loading: true, spin: sp,
 		tabs:     []tabID{tabCandidates},
-		profiles: map[string]*Profile{}, posts: map[string]*[]Post{}, records: map[string]string{},
+		profiles: map[string]*bsky.Profile{}, posts: map[string]*[]bsky.Post{}, records: map[string]string{},
 		fresh: map[string]time.Time{}, now: time.Now,
 	}
 }
@@ -186,7 +187,7 @@ func newFeedModel(a *app, load loadFunc, tl timelineFunc) model {
 // newPostsModel is the feed browser limited to your own posts, with n to write
 // one and d to delete the selected one.
 func newPostsModel(a *app, tl timelineFunc) model {
-	m := newFeedModel(a, func(context.Context) ([]Profile, map[string]repostCtx, error) { return nil, nil, nil }, tl)
+	m := newFeedModel(a, func(context.Context) ([]bsky.Profile, map[string]repostCtx, error) { return nil, nil, nil }, tl)
 	m.title = "posts"
 	m.tabs = []tabID{tabFollowing}
 	m.loading = false
@@ -251,10 +252,10 @@ func (m model) startCheck(manual bool) (model, tea.Cmd) {
 	}
 	known := make(map[string]bool, len(m.items)+len(m.newPosts))
 	for _, it := range m.items {
-		known[it.key()] = true
+		known[it.Key()] = true
 	}
 	for _, it := range m.newPosts {
-		known[it.key()] = true
+		known[it.Key()] = true
 	}
 	m.checking = true
 	if manual {
@@ -263,7 +264,7 @@ func (m model) startCheck(manual bool) (model, tea.Cmd) {
 	tl := m.timeline
 	return m, func() tea.Msg {
 		ctx := context.Background()
-		var fresh []FeedItem
+		var fresh []bsky.FeedItem
 		got := map[string]bool{}
 		cursor := ""
 		for page := 0; page < checkPages; page++ {
@@ -273,7 +274,7 @@ func (m model) startCheck(manual bool) (model, tea.Cmd) {
 			}
 			overlap := false
 			for _, it := range items {
-				switch k := it.key(); {
+				switch k := it.Key(); {
 				case known[k]:
 					overlap = true
 				case !got[k]:
@@ -332,11 +333,11 @@ func (m model) applyPending() model {
 		return m
 	}
 	atTop := m.cur == 0 && m.listTop == 0 && !m.inPost
-	m.items = append(append([]FeedItem{}, m.newPosts...), m.items...)
+	m.items = append(append([]bsky.FeedItem{}, m.newPosts...), m.items...)
 	if m.fancy {
 		t := m.now()
 		for _, it := range m.newPosts {
-			m.fresh[it.key()] = t
+			m.fresh[it.Key()] = t
 		}
 	}
 	if !atTop {
@@ -356,7 +357,7 @@ func (m model) applyPending() model {
 
 // mergeCandidates adds authors of newly reposted posts to the Reposts queue
 // (at the end, so the account you are reviewing does not move).
-func (m model) mergeCandidates(items []FeedItem) model {
+func (m model) mergeCandidates(items []bsky.FeedItem) model {
 	if m.loading || m.ctxs == nil {
 		return m
 	}
@@ -406,17 +407,17 @@ func (m model) fetchProfile(did string) tea.Cmd {
 
 // subject is the account being looked at: the current candidate, or the author
 // of the current timeline post. Fetched details replace the summary when loaded.
-func (m model) subject() (Profile, bool) {
-	var p Profile
+func (m model) subject() (bsky.Profile, bool) {
+	var p bsky.Profile
 	switch m.active() {
 	case tabCandidates:
 		if m.idx < 0 || m.idx >= len(m.list) {
-			return Profile{}, false
+			return bsky.Profile{}, false
 		}
 		p = m.list[m.idx]
 	default:
 		if m.cur < 0 || m.cur >= len(m.items) {
-			return Profile{}, false
+			return bsky.Profile{}, false
 		}
 		p = m.items[m.cur].Author
 	}
@@ -495,7 +496,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.refreshErr = nil
-		m.newPosts = append(append([]FeedItem{}, msg.items...), m.newPosts...)
+		m.newPosts = append(append([]bsky.FeedItem{}, msg.items...), m.newPosts...)
 		m.newGap = m.newGap || msg.gap
 		m = m.mergeCandidates(msg.items)
 		if manual || m.readingTop() {
@@ -803,15 +804,15 @@ func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
-		if n := uniseg.GraphemeClusterCount(text); n > maxPostGraphemes {
-			m.err = fmt.Errorf("post is %d characters; the limit is %d", n, maxPostGraphemes)
+		if n := uniseg.GraphemeClusterCount(text); n > bsky.MaxPostGraphemes {
+			m.err = fmt.Errorf("post is %d characters; the limit is %d", n, bsky.MaxPostGraphemes)
 			return m, nil
 		}
 		m.busy, m.err = true, nil
 		c := m.a.c
-		var reply *replyRef
+		var reply *bsky.ReplyRef
 		if m.replyTo != nil {
-			reply = m.replyTo.replyTo()
+			reply = m.replyTo.ReplyTo()
 		}
 		return m, func() tea.Msg {
 			uri, err := c.Post(context.Background(), text, reply)
@@ -865,7 +866,7 @@ func (m model) likeKey() (model, tea.Cmd) {
 		if it.Like != "" {
 			return likedMsg{item: it, unlik: true, err: c.Unlike(ctx, it.Like)}
 		}
-		uri, err := c.Like(ctx, postRef{it.URI, it.CID})
+		uri, err := c.Like(ctx, bsky.PostRef{URI: it.URI, CID: it.CID})
 		return likedMsg{item: it, like: uri, err: err}
 	}
 }
@@ -888,7 +889,7 @@ func (m model) applyLiked(msg likedMsg) (tea.Model, tea.Cmd) {
 	}
 	m.audit(ev)
 	// your like adds to (or comes off) the count shown, until the next fetch
-	setLike := func(x *FeedItem) {
+	setLike := func(x *bsky.FeedItem) {
 		switch {
 		case x.Like == "" && msg.like != "":
 			x.Stats.Likes++
@@ -903,7 +904,7 @@ func (m model) applyLiked(msg likedMsg) (tea.Model, tea.Cmd) {
 			m.ctxs[did] = rc
 		}
 	}
-	for _, list := range [][]FeedItem{m.items, m.newPosts} {
+	for _, list := range [][]bsky.FeedItem{m.items, m.newPosts} {
 		for i := range list {
 			if list[i].URI == it.URI {
 				setLike(&list[i])
@@ -921,24 +922,24 @@ func (m model) applyLiked(msg likedMsg) (tea.Model, tea.Cmd) {
 }
 
 // selected is the timeline post under the cursor.
-func (m model) selected() (FeedItem, bool) {
+func (m model) selected() (bsky.FeedItem, bool) {
 	if m.active() == tabCandidates { // the reposted post of the account on screen
 		if m.loading || m.idx >= len(m.list) {
-			return FeedItem{}, false
+			return bsky.FeedItem{}, false
 		}
 		it := m.ctxs[m.list[m.idx].DID].Item
 		return it, it.URI != ""
 	}
 	if m.cur >= len(m.items) {
-		return FeedItem{}, false
+		return bsky.FeedItem{}, false
 	}
 	return m.items[m.cur], true
 }
 
 // ownItem is the selected timeline post when it is yours.
-func (m model) ownItem() (FeedItem, bool) {
+func (m model) ownItem() (bsky.FeedItem, bool) {
 	if m.active() != tabFollowing || m.cur >= len(m.items) {
-		return FeedItem{}, false
+		return bsky.FeedItem{}, false
 	}
 	it := m.items[m.cur]
 	return it, it.Author.DID == m.a.c.DID && it.URI != ""
@@ -979,8 +980,8 @@ func (m model) applyDeleted(msg deletedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.audit(ev)
-	keep := func(items []FeedItem) []FeedItem {
-		return slices.DeleteFunc(slices.Clone(items), func(x FeedItem) bool { return x.URI == it.URI })
+	keep := func(items []bsky.FeedItem) []bsky.FeedItem {
+		return slices.DeleteFunc(slices.Clone(items), func(x bsky.FeedItem) bool { return x.URI == it.URI })
 	}
 	removedBefore := 0
 	for i, x := range m.items {
@@ -1147,7 +1148,7 @@ func (m model) maybeLoadMore() (model, tea.Cmd) {
 }
 
 // decideKey applies decision to p, unless that is already recorded.
-func (m model) decideKey(p Profile, decision string) (model, tea.Cmd) {
+func (m model) decideKey(p bsky.Profile, decision string) (model, tea.Cmd) {
 	if e, ok := m.a.st.Entries[p.DID]; ok && e.Decision == decision {
 		m.status = fmt.Sprintf("@%s is already %s", p.Handle, decision)
 		return m, nil
@@ -1162,7 +1163,7 @@ func (m model) decideKey(p Profile, decision string) (model, tea.Cmd) {
 // decide records decision for p. Blocking or following (and lifting an earlier
 // block or follow when it is overridden) calls the API first; the state file is
 // only touched in applyAct.
-func (m model) decide(p Profile, decision string) (model, tea.Cmd) {
+func (m model) decide(p bsky.Profile, decision string) (model, tea.Cmd) {
 	prev, had := m.a.st.Entries[p.DID]
 	var prevP *Entry
 	if had {
@@ -1195,14 +1196,14 @@ func (m model) decide(p Profile, decision string) (model, tea.Cmd) {
 				}
 			}
 			if known != "" {
-				if msg.err = c.deleteFor(ctx, prev.Decision, known); msg.err != nil {
+				if msg.err = deleteFor(ctx, c, prev.Decision, known); msg.err != nil {
 					return msg
 				}
 			}
 			msg.lifted = true
 		}
 		if isRemote(decision) {
-			msg.newURI, msg.err = c.createFor(ctx, decision, p.DID)
+			msg.newURI, msg.err = createFor(ctx, c, decision, p.DID)
 		}
 		return msg
 	}
@@ -1229,10 +1230,10 @@ func (m model) undo() (model, tea.Cmd) {
 		ctx := context.Background()
 		msg := actMsg{undo: e, isUndo: true}
 		if isRemote(e.decision) && e.record != "" {
-			msg.err = c.deleteFor(ctx, e.decision, e.record)
+			msg.err = deleteFor(ctx, c, e.decision, e.record)
 		}
 		if msg.err == nil && e.prev != nil && isRemote(e.prev.Decision) && e.prev.Decision != e.decision {
-			msg.newURI, msg.err = c.createFor(ctx, e.prev.Decision, e.profile.DID) // restore what we lifted
+			msg.newURI, msg.err = createFor(ctx, c, e.prev.Decision, e.profile.DID) // restore what we lifted
 		}
 		return msg
 	}
@@ -1387,7 +1388,7 @@ func (m model) profilePanel(cw int, pos string) []string {
 
 // currentPost marks the post you are on: a heading and an accent bar down its side,
 // so it stands apart from the author's other posts listed below it.
-func currentPost(title string, p Post, it FeedItem, cw int) []string {
+func currentPost(title string, p bsky.Post, it bsky.FeedItem, cw int) []string {
 	lines := []string{headingStyle.Render("▸ " + title)}
 	bar := accentStyle.Render("┃ ")
 	for _, l := range renderPost(p, max(cw-2, 10), true) {
@@ -1403,7 +1404,7 @@ func currentPost(title string, p Post, it FeedItem, cw int) []string {
 }
 
 // statsLine is the post's engagement counts and a link to it on bsky.app.
-func statsLine(it FeedItem) string {
+func statsLine(it bsky.FeedItem) string {
 	count := func(n int, one string) string {
 		switch {
 		case n == 1:
@@ -1423,7 +1424,7 @@ func statsLine(it FeedItem) string {
 }
 
 // postLink is the post's bsky.app address, using the author's handle when known.
-func postLink(it FeedItem) string {
+func postLink(it bsky.FeedItem) string {
 	if it.Author.Handle == "" {
 		return postURL(it.URI)
 	}
@@ -1431,7 +1432,7 @@ func postLink(it FeedItem) string {
 }
 
 // recentLines lists the author's latest posts, leaving out cur (shown above as the current post).
-func (m model) recentLines(did string, cw int, cur Post) []string {
+func (m model) recentLines(did string, cw int, cur bsky.Post) []string {
 	lines := []string{headingStyle.Render("Recent posts"), ""}
 	switch pp := m.posts[did]; {
 	case pp == nil:
@@ -1450,7 +1451,7 @@ func (m model) recentLines(did string, cw int, cur Post) []string {
 }
 
 // rc0 is the reposted post for did, or the zero Post.
-func rc0(ctxs map[string]repostCtx, did string) Post { return ctxs[did].Post }
+func rc0(ctxs map[string]repostCtx, did string) bsky.Post { return ctxs[did].Post }
 
 func (m model) candRight(cw int) []string {
 	p, _ := m.subject()
@@ -1714,8 +1715,8 @@ func (m model) composeView() string {
 	}
 	b.WriteString(in.View() + "\n\n")
 	n := uniseg.GraphemeClusterCount(in.Value())
-	count := fmt.Sprintf("%d/%d", n, maxPostGraphemes)
-	if n > maxPostGraphemes {
+	count := fmt.Sprintf("%d/%d", n, bsky.MaxPostGraphemes)
+	if n > bsky.MaxPostGraphemes {
 		count = errStyle.Render(count)
 	} else {
 		count = dimStyle.Render(count)
@@ -1754,28 +1755,28 @@ const previewLines = 3
 // preview is the post's own text, attachments and link card as one paragraph (no
 // stray line breaks). URLs stay whole so the terminal can detect and open them.
 // A quoted post is left out; itemLines shows it on lines of its own.
-func preview(p Post) string {
+func preview(p bsky.Post) string {
 	parts := append([]string{p.Text}, p.Attach...)
 	if p.Link != nil {
-		parts = append(parts, p.Link.label(p.Text))
+		parts = append(parts, cardLabel(*p.Link, p.Text))
 	}
 	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
 }
 
 // cardTitle is the page title to show, unless it is missing or the post's text
 // already says it.
-func (c linkCard) cardTitle(text string) string {
+func cardTitle(c bsky.LinkCard, text string) string {
 	if c.Title == "" || strings.Contains(strings.ToLower(text), strings.ToLower(c.Title)) {
 		return ""
 	}
 	return c.Title
 }
 
-// label is the card in one line: "↗ Title https://…". The URL is left out when the
+// cardLabel is the card in one line: "↗ Title https://…". The URL is left out when the
 // post's text already has it, and the title when the text already says it.
-func (c linkCard) label(text string) string {
+func cardLabel(c bsky.LinkCard, text string) string {
 	parts := []string{"↗"}
-	if t := c.cardTitle(text); t != "" {
+	if t := cardTitle(c, text); t != "" {
 		parts = append(parts, t)
 	}
 	if !strings.Contains(text, c.URI) {
@@ -1817,7 +1818,7 @@ func (m model) inThread(i int) bool {
 
 // ageLink is the row's age, padded to 5 columns, as a clickable link to the post
 // on bsky.app (in terminals that support OSC 8 hyperlinks).
-func ageLink(it FeedItem, age string) string {
+func ageLink(it bsky.FeedItem, age string) string {
 	pad := strings.Repeat(" ", max(5-lipgloss.Width(age), 0))
 	if it.URI == "" {
 		return age + pad
@@ -1879,7 +1880,7 @@ func (m model) itemLines(i, w int) []string {
 	if it.Like != "" {
 		add("♥", errStyle)
 	}
-	fresh, isFresh := m.freshStyle(it.key())
+	fresh, isFresh := m.freshStyle(it.Key())
 	if isFresh {
 		add("new", fresh)
 	}
@@ -1952,7 +1953,7 @@ func (m model) listView() string {
 
 // renderPost shows a post in full: a dim header line, then the wrapped text
 // indented. full adds reply context and image links (used for the post under review).
-func renderPost(p Post, w int, full bool) []string {
+func renderPost(p bsky.Post, w int, full bool) []string {
 	kind := ""
 	switch {
 	case p.Repost:
@@ -1984,7 +1985,7 @@ func renderPost(p Post, w int, full bool) []string {
 		body(a, &dimStyle, "")
 	}
 	if p.Link != nil {
-		if l := p.Link.label(p.Text); l != "" {
+		if l := cardLabel(*p.Link, p.Text); l != "" {
 			body(l, &dimStyle, "")
 		}
 	}

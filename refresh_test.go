@@ -7,24 +7,26 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mdfranz/bskyban/internal/bsky"
 )
 
-func post(uri, handle, by string) FeedItem {
-	return FeedItem{
+func post(uri, handle, by string) bsky.FeedItem {
+	return bsky.FeedItem{
 		URI: uri, By: by,
-		Author: Profile{DID: "did:" + handle, Handle: handle + ".bsky.social", DisplayName: handle},
-		Post:   Post{Text: "text of " + uri, CreatedAt: "2026-11-01T06:00:00Z"},
+		Author: bsky.Profile{DID: "did:" + handle, Handle: handle + ".bsky.social", DisplayName: handle},
+		Post:   bsky.Post{Text: "text of " + uri, CreatedAt: "2026-11-01T06:00:00Z"},
 	}
 }
 
 // script serves a fixed list of timeline pages (newest first) and counts calls.
 type script struct {
-	pages [][]FeedItem
+	pages [][]bsky.FeedItem
 	calls int
 	err   error
 }
 
-func (s *script) fn(_ context.Context, cursor string) ([]FeedItem, string, error) {
+func (s *script) fn(_ context.Context, cursor string) ([]bsky.FeedItem, string, error) {
 	s.calls++
 	if s.err != nil {
 		return nil, "", s.err
@@ -43,7 +45,7 @@ func (s *script) fn(_ context.Context, cursor string) ([]FeedItem, string, error
 	return s.pages[i], next, nil
 }
 
-func refreshModel(t *testing.T, s *script, shown ...FeedItem) model {
+func refreshModel(t *testing.T, s *script, shown ...bsky.FeedItem) model {
 	a, _ := newTestApp(t)
 	m := newFeedModel(a, nil, s.fn)
 	m.loading, m.followLoading = false, false
@@ -71,7 +73,7 @@ func reading(m model) model {
 	return m
 }
 
-func uris(items []FeedItem) string {
+func uris(items []bsky.FeedItem) string {
 	var u []string
 	for _, it := range items {
 		u = append(u, it.URI)
@@ -81,7 +83,7 @@ func uris(items []FeedItem) string {
 
 func TestBackgroundCheckHoldsNewPostsBack(t *testing.T) {
 	A, B, C := post("A", "a", ""), post("B", "b", ""), post("C", "c", "")
-	s := &script{pages: [][]FeedItem{{post("N2", "n2", ""), post("N1", "n1", ""), A, B, C}}}
+	s := &script{pages: [][]bsky.FeedItem{{post("N2", "n2", ""), post("N1", "n1", ""), A, B, C}}}
 	m := refreshModel(t, s, A, B, C)
 	m.cur = 1
 	m = check(t, m, false)
@@ -106,7 +108,7 @@ func TestBackgroundCheckHoldsNewPostsBack(t *testing.T) {
 
 func TestRKeyInsertsPostsAndKeepsYourPlace(t *testing.T) {
 	A, B, C := post("A", "a", ""), post("B", "b", ""), post("C", "c", "")
-	s := &script{pages: [][]FeedItem{{post("N2", "n2", ""), post("N1", "n1", ""), A, B, C}}}
+	s := &script{pages: [][]bsky.FeedItem{{post("N2", "n2", ""), post("N1", "n1", ""), A, B, C}}}
 
 	m := refreshModel(t, s, A, B, C)
 	m.cur = 1
@@ -146,7 +148,7 @@ func TestRKeyInsertsPostsAndKeepsYourPlace(t *testing.T) {
 
 func TestManualRefreshFetchesWhenNothingIsWaiting(t *testing.T) {
 	A := post("A", "a", "")
-	s := &script{pages: [][]FeedItem{{A}}}
+	s := &script{pages: [][]bsky.FeedItem{{A}}}
 	m := refreshModel(t, s, A)
 	m, cmd := m.startCheck(true)
 	next, _ := m.Update(cmd())
@@ -154,7 +156,7 @@ func TestManualRefreshFetchesWhenNothingIsWaiting(t *testing.T) {
 	if s.calls != 1 || m.status != "no new posts" {
 		t.Errorf("calls=%d status=%q", s.calls, m.status)
 	}
-	s.pages = [][]FeedItem{{post("N", "n", ""), A}}
+	s.pages = [][]bsky.FeedItem{{post("N", "n", ""), A}}
 	m = press(m, "R") // R in the UI: no pending posts, so it checks and then applies
 	if cmd := m.checking; !cmd {
 		t.Fatal("R should start a check")
@@ -163,7 +165,7 @@ func TestManualRefreshFetchesWhenNothingIsWaiting(t *testing.T) {
 
 func TestCheckWalksBackUntilItOverlaps(t *testing.T) {
 	A := post("A", "a", "")
-	s := &script{pages: [][]FeedItem{
+	s := &script{pages: [][]bsky.FeedItem{
 		{post("N4", "n4", ""), post("N3", "n3", "")},
 		{post("N2", "n2", ""), post("N1", "n1", "")},
 		{A},
@@ -174,9 +176,9 @@ func TestCheckWalksBackUntilItOverlaps(t *testing.T) {
 	}
 
 	// more new posts than a check will look at: it stops and says so
-	var pages [][]FeedItem
+	var pages [][]bsky.FeedItem
 	for p := 0; p < 10; p++ {
-		pages = append(pages, []FeedItem{post(fmt.Sprintf("P%da", p), "x", ""), post(fmt.Sprintf("P%db", p), "y", "")})
+		pages = append(pages, []bsky.FeedItem{post(fmt.Sprintf("P%da", p), "x", ""), post(fmt.Sprintf("P%db", p), "y", "")})
 	}
 	s = &script{pages: pages}
 	m = check(t, reading(refreshModel(t, s, A)), false)
@@ -191,7 +193,7 @@ func TestCheckWalksBackUntilItOverlaps(t *testing.T) {
 
 func TestSamePostRepostedByTwoPeopleIsTwoEntries(t *testing.T) {
 	A := post("A", "a", "")
-	s := &script{pages: [][]FeedItem{{post("X", "x", "alice.bsky.social"), post("X", "x", "bob.bsky.social"), A}}}
+	s := &script{pages: [][]bsky.FeedItem{{post("X", "x", "alice.bsky.social"), post("X", "x", "bob.bsky.social"), A}}}
 	m := check(t, reading(refreshModel(t, s, A)), false)
 	if len(m.newPosts) != 2 {
 		t.Fatalf("newPosts = %s", uris(m.newPosts))
@@ -204,7 +206,7 @@ func TestSamePostRepostedByTwoPeopleIsTwoEntries(t *testing.T) {
 
 func TestFailedChecks(t *testing.T) {
 	A := post("A", "a", "")
-	s := &script{pages: [][]FeedItem{{A}}, err: errors.New("network down")}
+	s := &script{pages: [][]bsky.FeedItem{{A}}, err: errors.New("network down")}
 	m := check(t, refreshModel(t, s, A), false)
 	if m.refreshErr == nil || m.err != nil {
 		t.Fatalf("a background failure should only mark the header: refreshErr=%v err=%v", m.refreshErr, m.err)
@@ -240,11 +242,11 @@ func TestFailedChecks(t *testing.T) {
 
 func TestNewRepostAuthorsJoinTheQueue(t *testing.T) {
 	A := post("A", "a", "")
-	existing := Profile{DID: "did:old", Handle: "old.bsky.social"}
+	existing := bsky.Profile{DID: "did:old", Handle: "old.bsky.social"}
 	followed := post("F", "followed", "alice.bsky.social")
 	followed.Author.Viewer.Following = "at://follow"
 	decided := post("D", "decided", "alice.bsky.social")
-	s := &script{pages: [][]FeedItem{{
+	s := &script{pages: [][]bsky.FeedItem{{
 		post("R1", "newguy", "alice.bsky.social"),
 		followed,
 		decided,
@@ -253,7 +255,7 @@ func TestNewRepostAuthorsJoinTheQueue(t *testing.T) {
 		A,
 	}}}
 	m := refreshModel(t, s, A)
-	m.list = []Profile{existing}
+	m.list = []bsky.Profile{existing}
 	m.ctxs["did:old"] = repostCtx{By: []string{"alice.bsky.social"}}
 	m.a.st.Entries["did:decided"] = Entry{Decision: decKept}
 	m = check(t, m, false)
@@ -281,7 +283,7 @@ func TestNewRepostAuthorsJoinTheQueue(t *testing.T) {
 
 func TestTickSchedulesTheNextCheck(t *testing.T) {
 	A := post("A", "a", "")
-	s := &script{pages: [][]FeedItem{{A}}}
+	s := &script{pages: [][]bsky.FeedItem{{A}}}
 	m := refreshModel(t, s, A)
 	if m.nextTick() == nil {
 		t.Fatal("30s refresh should schedule ticks")
@@ -314,7 +316,7 @@ func TestReviewModeHasNoRefresh(t *testing.T) {
 
 func TestRWhileACheckIsRunning(t *testing.T) {
 	A := post("A", "a", "")
-	s := &script{pages: [][]FeedItem{{post("N1", "n1", ""), A}}}
+	s := &script{pages: [][]bsky.FeedItem{{post("N1", "n1", ""), A}}}
 
 	// posts are already waiting and another check is in flight: insert them now
 	m := check(t, reading(refreshModel(t, s, A)), false)
@@ -340,7 +342,7 @@ func TestRWhileACheckIsRunning(t *testing.T) {
 
 func TestNewPostsInsertThemselvesOnlyAtTheTop(t *testing.T) {
 	A := post("A", "a", "")
-	s := &script{pages: [][]FeedItem{{post("N1", "n1", ""), A}}}
+	s := &script{pages: [][]bsky.FeedItem{{post("N1", "n1", ""), A}}}
 
 	m := check(t, refreshModel(t, s, A), false) // on the first post of the list
 	if uris(m.items) != "N1,A" || len(m.newPosts) != 0 || m.cur != 0 {

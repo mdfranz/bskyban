@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
 	"github.com/rivo/uniseg"
 )
@@ -54,7 +55,7 @@ Environment:
 `
 
 type app struct {
-	c      *Client
+	c      *bsky.Client
 	st     *State
 	audit  *Audit
 	stdin  io.Reader
@@ -64,7 +65,7 @@ type app struct {
 // followers returns followers (newest first) you don't follow back and have no
 // recorded decision for (new ones),
 // plus skipped ones when backlog is true, or every follower when all is true. since > 0 limits to the newest N followers.
-func (a *app) followers(ctx context.Context, since int, all, backlog bool) ([]Profile, error) {
+func (a *app) followers(ctx context.Context, since int, all, backlog bool) ([]bsky.Profile, error) {
 	fs, err := a.c.GetFollowers(ctx, since)
 	if err != nil {
 		return nil, err
@@ -72,7 +73,7 @@ func (a *app) followers(ctx context.Context, since int, all, backlog bool) ([]Pr
 	if all {
 		return fs, nil
 	}
-	var out []Profile
+	var out []bsky.Profile
 	for _, f := range fs {
 		if a.isNew(f, backlog) {
 			out = append(out, f)
@@ -83,7 +84,7 @@ func (a *app) followers(ctx context.Context, since int, all, backlog bool) ([]Pr
 
 // isNew reports whether p is someone you don't follow, haven't blocked, and have
 // no recorded decision for (skipped ones count when backlog is true).
-func (a *app) isNew(p Profile, backlog bool) bool {
+func (a *app) isNew(p bsky.Profile, backlog bool) bool {
 	if p.Viewer.Following != "" || p.Viewer.Blocking != "" || p.DID == a.c.DID {
 		return false
 	}
@@ -93,19 +94,19 @@ func (a *app) isNew(p Profile, backlog bool) bool {
 
 // repostCtx records how a candidate reached your timeline.
 type repostCtx struct {
-	Post Post
-	Item FeedItem // the reposted post, for liking or replying to it
-	By   []string // handles of people you follow who reposted them
+	Post bsky.Post
+	Item bsky.FeedItem // the reposted post, for liking or replying to it
+	By   []string      // handles of people you follow who reposted them
 }
 
 // feedCandidates returns the original authors of reposts in your timeline that
 // are new to you, in order of first appearance (newest first), each once.
-func (a *app) feedCandidates(ctx context.Context, pages int, backlog bool) ([]Profile, map[string]repostCtx, error) {
+func (a *app) feedCandidates(ctx context.Context, pages int, backlog bool) ([]bsky.Profile, map[string]repostCtx, error) {
 	reposts, err := a.c.GetTimelineReposts(ctx, pages)
 	if err != nil {
 		return nil, nil, err
 	}
-	var out []Profile
+	var out []bsky.Profile
 	rc := map[string]repostCtx{}
 	for _, r := range reposts {
 		if !a.isNew(r.Author, backlog) {
@@ -195,7 +196,7 @@ func (a *app) cmdList(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	byDID := map[string]Profile{}
+	byDID := map[string]bsky.Profile{}
 	for _, p := range profiles {
 		byDID[p.DID] = p
 	}
@@ -357,8 +358,8 @@ func (a *app) cmdPost(ctx context.Context, args []string) (err error) {
 	if text == "" {
 		return fmt.Errorf("%w: post needs some text", errUsage)
 	}
-	if n := uniseg.GraphemeClusterCount(text); n > maxPostGraphemes {
-		return fmt.Errorf("post is %d characters; the limit is %d", n, maxPostGraphemes)
+	if n := uniseg.GraphemeClusterCount(text); n > bsky.MaxPostGraphemes {
+		return fmt.Errorf("post is %d characters; the limit is %d", n, bsky.MaxPostGraphemes)
 	}
 	ev := AuditEvent{Action: "post", DID: a.c.DID, Handle: a.c.Handle, DryRun: *dry, Detail: truncateWidth(strings.Join(strings.Fields(text), " "), 200)}
 	defer func() {
@@ -450,7 +451,7 @@ func (a *app) resolvePost(ctx context.Context, ref string) (string, error) {
 	switch {
 	case strings.HasPrefix(ref, "at://"):
 		parts := strings.Split(strings.TrimPrefix(ref, "at://"), "/")
-		if len(parts) != 3 || parts[1] != postCollection {
+		if len(parts) != 3 || parts[1] != bsky.PostCollection {
 			return "", fmt.Errorf("%w: not a post URI", errUsage)
 		}
 		actor, rkey = parts[0], parts[2]
@@ -472,7 +473,7 @@ func (a *app) resolvePost(ctx context.Context, ref string) (string, error) {
 		}
 		actor = p.DID
 	}
-	return "at://" + actor + "/" + postCollection + "/" + rkey, nil
+	return "at://" + actor + "/" + bsky.PostCollection + "/" + rkey, nil
 }
 
 // cmdLike likes or unlikes posts given as at:// URIs or bsky.app links.
@@ -677,7 +678,7 @@ func (a *app) identifiers(args []string) ([]string, error) {
 }
 
 // formatPost renders a post as a single line: "<age> [tag] text".
-func formatPost(p Post, max int) string {
+func formatPost(p bsky.Post, max int) string {
 	tag := ""
 	switch {
 	case p.Repost:

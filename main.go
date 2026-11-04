@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
@@ -87,7 +88,7 @@ func realMain() int {
 		return fail(err)
 	}
 	ctx := context.Background()
-	c := NewClient(pds)
+	c := bsky.NewClient(pds)
 	if err := c.Login(ctx, handle, pw); err != nil {
 		return fail(fmt.Errorf("login: %w", err))
 	}
@@ -100,10 +101,10 @@ func realMain() int {
 		} else {
 			applyTheme(opts.theme)
 			fm := newFeedModel(a,
-				func(ctx context.Context) ([]Profile, map[string]repostCtx, error) {
+				func(ctx context.Context) ([]bsky.Profile, map[string]repostCtx, error) {
 					return a.feedCandidates(ctx, opts.pages, opts.backlog)
 				},
-				func(ctx context.Context, cursor string) ([]FeedItem, string, error) {
+				func(ctx context.Context, cursor string) ([]bsky.FeedItem, string, error) {
 					return a.c.GetTimeline(ctx, cursor, 50)
 				})
 			fm.refresh, fm.backlog = opts.refresh, opts.backlog
@@ -115,7 +116,7 @@ func realMain() int {
 			err = a.cmdPostsList(ctx, opts.n, opts.asJSON)
 		} else {
 			applyTheme(opts.theme)
-			pm := newPostsModel(a, func(ctx context.Context, cursor string) ([]FeedItem, string, error) {
+			pm := newPostsModel(a, func(ctx context.Context, cursor string) ([]bsky.FeedItem, string, error) {
 				return a.c.GetOwnPosts(ctx, cursor, 50)
 			})
 			pm.refresh = opts.refresh
@@ -124,7 +125,7 @@ func realMain() int {
 		}
 	case "review":
 		applyTheme(opts.theme)
-		err = runTUI(newModel(a, "review", func(ctx context.Context) ([]Profile, map[string]repostCtx, error) {
+		err = runTUI(newModel(a, "review", func(ctx context.Context) ([]bsky.Profile, map[string]repostCtx, error) {
 			l, err := a.followers(ctx, opts.since, false, opts.backlog)
 			return l, nil, err
 		}))

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
@@ -52,7 +53,7 @@ type Snapshot struct {
 // snapshotOf describes p. detailed says whether p came from a full profile
 // fetch; summaries (timeline authors) have no counts, so those are left out
 // rather than logged as a misleading 0.
-func snapshotOf(p Profile, detailed bool) *Snapshot {
+func snapshotOf(p bsky.Profile, detailed bool) *Snapshot {
 	bio := strings.Join(strings.Fields(p.Description), " ")
 	if r := []rune(bio); len(r) > 200 {
 		bio = string(r[:200])

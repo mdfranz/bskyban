@@ -13,6 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
@@ -87,7 +88,7 @@ func newTestApp(t *testing.T) (*app, *fakePDS) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	c := NewClient(srv.URL)
+	c := bsky.NewClient(srv.URL)
 	c.DID = "did:me"
 	st := &State{path: t.TempDir() + "/state.json", Entries: map[string]Entry{}}
 	return &app{c: c, st: st, audit: NewAudit(t.TempDir() + "/audit.jsonl")}, f
@@ -138,18 +139,18 @@ func candidates(t *testing.T) (model, *fakePDS) {
 	m.loading = false
 	m.width, m.height = 120, 40
 	for _, h := range []string{"a", "b", "c"} {
-		m.list = append(m.list, Profile{DID: "did:" + h, Handle: h + ".bsky.social", DisplayName: h})
+		m.list = append(m.list, bsky.Profile{DID: "did:" + h, Handle: h + ".bsky.social", DisplayName: h})
 	}
 	return m, f
 }
 
 func TestViewTwoPanels(t *testing.T) {
 	m, _ := candidates(t)
-	p := Profile{DID: "did:a", Handle: "junoview.bsky.social", DisplayName: "Junoview",
+	p := bsky.Profile{DID: "did:a", Handle: "junoview.bsky.social", DisplayName: "Junoview",
 		Description: "A modern presentation editor. junoview.com", PostsCount: 43, FollowersCount: 40, FollowsCount: 580}
-	m.list = []Profile{p}
+	m.list = []bsky.Profile{p}
 	m.profiles[p.DID] = &p
-	posts := []Post{{Text: "Code boxes in 13 colour themes. Free, in your browser: junoview.com #Python", CreatedAt: "2026-11-01T06:00:00Z"},
+	posts := []bsky.Post{{Text: "Code boxes in 13 colour themes. Free, in your browser: junoview.com #Python", CreatedAt: "2026-11-01T06:00:00Z"},
 		{Text: "reply text", Reply: true, CreatedAt: "2026-11-01T06:00:00Z"}}
 	m.posts[p.DID] = &posts
 
@@ -212,9 +213,9 @@ func TestArrowNavigationDoesNotDecide(t *testing.T) {
 func TestScrollClampsAndResets(t *testing.T) {
 	m, _ := candidates(t)
 	m.height = 14 // small window: avail = 8
-	var posts []Post
+	var posts []bsky.Post
 	for i := 0; i < 10; i++ {
-		posts = append(posts, Post{Text: fmt.Sprintf("post number %d", i), CreatedAt: "2026-11-01T06:00:00Z"})
+		posts = append(posts, bsky.Post{Text: fmt.Sprintf("post number %d", i), CreatedAt: "2026-11-01T06:00:00Z"})
 	}
 	m.posts["did:a"] = &posts
 	m.profiles["did:a"] = &m.list[0]
@@ -419,11 +420,11 @@ func followingModel(t *testing.T) (model, *fakePDS) {
 	m := newFeedModel(a, nil, nil)
 	m.loading, m.followLoading = false, false
 	m.width, m.height = 120, 40
-	m.items = []FeedItem{
-		{Author: Profile{DID: "did:friend", Handle: "friend.bsky.social", DisplayName: "Friend", Viewer: Profile{}.Viewer},
-			Post: Post{Text: "hello world", CreatedAt: "2026-11-01T06:00:00Z", ParentHandle: "x.bsky.social", ParentText: "parent text", Reply: true}},
-		{Author: Profile{DID: "did:rando", Handle: "rando.bsky.social", DisplayName: "Rando"},
-			Post: Post{Text: "buy now", CreatedAt: "2026-11-01T05:00:00Z", Quote: "@q.bsky.social: quoted", Images: []string{"https://cdn.bsky.app/img/1.jpg"}},
+	m.items = []bsky.FeedItem{
+		{Author: bsky.Profile{DID: "did:friend", Handle: "friend.bsky.social", DisplayName: "Friend", Viewer: bsky.Profile{}.Viewer},
+			Post: bsky.Post{Text: "hello world", CreatedAt: "2026-11-01T06:00:00Z", ParentHandle: "x.bsky.social", ParentText: "parent text", Reply: true}},
+		{Author: bsky.Profile{DID: "did:rando", Handle: "rando.bsky.social", DisplayName: "Rando"},
+			Post: bsky.Post{Text: "buy now", CreatedAt: "2026-11-01T05:00:00Z", Quote: "@q.bsky.social: quoted", Images: []string{"https://cdn.bsky.app/img/1.jpg"}},
 			By:   "friend.bsky.social"},
 	}
 	m.items[0].Author.Viewer.Following = "at://follow/1"
@@ -511,8 +512,8 @@ func TestListWindowFollowsCursor(t *testing.T) {
 	m.height = 16 // avail 10 lines
 	m.items = nil
 	for i := 0; i < 20; i++ {
-		m.items = append(m.items, FeedItem{Author: Profile{DID: fmt.Sprint(i), Handle: fmt.Sprintf("u%d.bsky.social", i)},
-			Post: Post{Text: strings.Repeat(fmt.Sprintf("words%d ", i), 30)}})
+		m.items = append(m.items, bsky.FeedItem{Author: bsky.Profile{DID: fmt.Sprint(i), Handle: fmt.Sprintf("u%d.bsky.social", i)},
+			Post: bsky.Post{Text: strings.Repeat(fmt.Sprintf("words%d ", i), 30)}})
 	}
 	for i := 0; i < 12; i++ {
 		m = press(m, "down")
@@ -534,13 +535,13 @@ func TestListShowsUpToThreeLinesOfEachPost(t *testing.T) {
 	m, _ := followingModel(t)
 	m.width = 80
 	long := strings.TrimSpace(strings.Repeat("alpha beta gamma delta ", 30))
-	m.items = []FeedItem{
-		{Author: Profile{DID: "1", Handle: "long.bsky.social"}, Post: Post{Text: long}},
-		{Author: Profile{DID: "2", Handle: "short.bsky.social"}, Post: Post{Text: "just one line"}},
-		{Author: Profile{DID: "3", Handle: "img.bsky.social"}, Post: Post{Attach: []string{"▣ a cat"}}},
+	m.items = []bsky.FeedItem{
+		{Author: bsky.Profile{DID: "1", Handle: "long.bsky.social"}, Post: bsky.Post{Text: long}},
+		{Author: bsky.Profile{DID: "2", Handle: "short.bsky.social"}, Post: bsky.Post{Text: "just one line"}},
+		{Author: bsky.Profile{DID: "3", Handle: "img.bsky.social"}, Post: bsky.Post{Attach: []string{"▣ a cat"}}},
 	}
-	m.items = append(m.items, FeedItem{Author: Profile{DID: "4", Handle: "quote.bsky.social"},
-		Post: Post{Text: "look", Quote: "@q.bsky.social: first line\n\nsecond line\n\nthird"}})
+	m.items = append(m.items, bsky.FeedItem{Author: bsky.Profile{DID: "4", Handle: "quote.bsky.social"},
+		Post: bsky.Post{Text: "look", Quote: "@q.bsky.social: first line\n\nsecond line\n\nthird"}})
 	if ql := m.itemLines(3, m.listWidth()); len(ql) != 4 { // header, own text, quote, separator
 		t.Errorf("a quote should be one paragraph on a line of its own, got %d lines:\n%s", len(ql), strings.Join(ql, "\n"))
 	} else if q := termtext.StripANSI(ql[2]); !strings.Contains(q, "▎ @q.bsky.social: first line second line third") || strings.Contains(ql[1], "@q.bsky.social") {
@@ -572,9 +573,9 @@ func TestStackedLayoutFitsTheWindow(t *testing.T) {
 	p.Description = strings.Repeat("A long bio sentence. ", 8)
 	m.list[0] = p
 	m.profiles[p.DID] = &p
-	var posts []Post
+	var posts []bsky.Post
 	for i := 0; i < 8; i++ {
-		posts = append(posts, Post{Text: strings.Repeat("some post text ", 6), CreatedAt: "2026-11-01T06:00:00Z"})
+		posts = append(posts, bsky.Post{Text: strings.Repeat("some post text ", 6), CreatedAt: "2026-11-01T06:00:00Z"})
 	}
 	m.posts[p.DID] = &posts
 	if _, _, stacked := m.panelWidths(); !stacked {
@@ -660,7 +661,7 @@ func TestLayoutUsesTheWholeWidth(t *testing.T) {
 		m.width, m.height = w, 40
 		p := m.list[0]
 		m.profiles[p.DID] = &p
-		posts := []Post{{Text: strings.Repeat("wide terminal text ", 40), CreatedAt: "2026-11-01T06:00:00Z"}}
+		posts := []bsky.Post{{Text: strings.Repeat("wide terminal text ", 40), CreatedAt: "2026-11-01T06:00:00Z"}}
 		m.posts[p.DID] = &posts
 		var widest int
 		for _, line := range strings.Split(m.View(), "\n") {

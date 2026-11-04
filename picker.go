@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
@@ -25,7 +26,7 @@ var mentionRe = regexp.MustCompile(`(?i)(?:^|[^\w@])@([a-z0-9][a-z0-9-]*(?:\.[a-
 // postLinks lists everything in it worth opening, in a fixed order: the post on
 // bsky.app, its link card, URLs in its text, the quoted post, mentioned accounts,
 // then the author's profile. Duplicates are dropped.
-func postLinks(it FeedItem) []pickLink {
+func postLinks(it bsky.FeedItem) []pickLink {
 	var out []pickLink
 	seen := map[string]bool{}
 	add := func(label, url string, ext bool) {

@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"slices"
 	"testing"
+
+	"github.com/mdfranz/bskyban/internal/bsky"
 )
 
 func entry(author, authorHandle, by, following, blocking string) string {
@@ -37,7 +39,7 @@ func TestFeedCandidates(t *testing.T) {
 	defer srv.Close()
 
 	st := &State{path: t.TempDir() + "/state.json", Entries: map[string]Entry{"did:decided": {Decision: decKept}}}
-	a := &app{c: NewClient(srv.URL), st: st}
+	a := &app{c: bsky.NewClient(srv.URL), st: st}
 	a.c.DID = "did:me"
 
 	list, rc, err := a.feedCandidates(t.Context(), 1, false)

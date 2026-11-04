@@ -3,22 +3,9 @@ package main
 import (
 	"context"
 	"testing"
-)
 
-func TestLinkFacets(t *testing.T) {
-	text := "héllo https://example.com/a, and more"
-	f := linkFacets(text)
-	if len(f) != 1 {
-		t.Fatalf("got %d facets", len(f))
-	}
-	idx := f[0]["index"].(map[string]int)
-	if got := text[idx["byteStart"]:idx["byteEnd"]]; got != "https://example.com/a" {
-		t.Errorf("link = %q", got)
-	}
-	if len(linkFacets("no links")) != 0 {
-		t.Error("unexpected facet")
-	}
-}
+	"github.com/mdfranz/bskyban/internal/bsky"
+)
 
 func TestPostURL(t *testing.T) {
 	if got := postURL("at://did:plc:x/app.bsky.feed.post/3k"); got != "https://bsky.app/profile/did:plc:x/post/3k" {
@@ -27,7 +14,7 @@ func TestPostURL(t *testing.T) {
 }
 
 func TestPostURI(t *testing.T) {
-	a := &app{c: &Client{DID: "did:plc:me"}}
+	a := &app{c: &bsky.Client{DID: "did:plc:me"}}
 	for ref, want := range map[string]string{
 		"3k":                                    "at://did:plc:me/app.bsky.feed.post/3k",
 		"at://did:plc:me/app.bsky.feed.post/3k": "at://did:plc:me/app.bsky.feed.post/3k",

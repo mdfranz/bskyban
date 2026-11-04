@@ -85,3 +85,13 @@ func TestFindURLsTrimsPunctuation(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestMarkersAreNotStrandedAtLineEnd(t *testing.T) {
+	for _, text := range []string{"aaaa bbbb ▣×3 county map", "aaaa bbbb ▶ video clip"} {
+		for _, l := range Wrap(text, 10) {
+			if strings.HasSuffix(l, "▣×3") || strings.HasSuffix(l, "▶") {
+				t.Errorf("marker stranded at a line end: %q", Wrap(text, 10))
+			}
+		}
+	}
+}

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mdfranz/bskyban/internal/bsky"
 )
 
 func actions(t *testing.T, a *app) []string {
@@ -138,7 +140,8 @@ func TestFeedActionsRecordSourceAndVia(t *testing.T) {
 
 func TestFailedActionIsAuditedNotRecorded(t *testing.T) {
 	m, _ := candidates(t)
-	m.a.c.base = "http://127.0.0.1:1" // nothing listens here
+	m.a.c = bsky.NewClient("http://127.0.0.1:1") // nothing listens here
+	m.a.c.DID = "did:me"
 	m = press(m, "b")
 	if m.err == nil {
 		t.Fatal("expected an error to be shown")
@@ -216,7 +219,7 @@ func TestLogCommandFilters(t *testing.T) {
 }
 
 func TestSnapshotKeepsRealZeroCounts(t *testing.T) {
-	s := snapshotOf(Profile{PostsCount: 0, FollowersCount: 9, FollowsCount: 664}, true)
+	s := snapshotOf(bsky.Profile{PostsCount: 0, FollowersCount: 9, FollowsCount: 664}, true)
 	b, _ := json.Marshal(s)
 	if !strings.Contains(string(b), `"posts":0`) || !strings.Contains(string(b), `"following":664`) {
 		t.Errorf("snapshot json = %s", b)

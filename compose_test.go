@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
@@ -33,7 +34,7 @@ func typeText(m model, s string) model {
 
 func feedWithTimeline(t *testing.T) (model, *fakePDS) {
 	m, f := followingModel(t)
-	m.timeline = func(context.Context, string) ([]FeedItem, string, error) { return nil, "", nil }
+	m.timeline = func(context.Context, string) ([]bsky.FeedItem, string, error) { return nil, "", nil }
 	return m, f
 }
 
@@ -72,7 +73,7 @@ func TestComposeEscDiscardsAndLongPostIsRefused(t *testing.T) {
 		t.Fatalf("esc should discard without posting (composing=%v calls=%q)", m.composing, f.joined())
 	}
 	m = openCompose(m)
-	m.input.SetValue(strings.Repeat("x", maxPostGraphemes+1))
+	m.input.SetValue(strings.Repeat("x", bsky.MaxPostGraphemes+1))
 	m = step(m, key("enter"))
 	if !m.composing || m.err == nil || f.joined() != "" {
 		t.Errorf("over-long post should stay open with an error (composing=%v err=%v calls=%q)", m.composing, m.err, f.joined())
@@ -81,9 +82,9 @@ func TestComposeEscDiscardsAndLongPostIsRefused(t *testing.T) {
 
 func TestDeleteOwnPostNeedsConfirmation(t *testing.T) {
 	m, f := feedWithTimeline(t)
-	own := FeedItem{Author: Profile{DID: "did:me", Handle: "me.bsky.social"}, URI: "at://did:me/app.bsky.feed.post/3k",
-		Post: Post{Text: "mine", CreatedAt: "2026-11-01T07:00:00Z"}}
-	m.items = append([]FeedItem{own}, m.items...)
+	own := bsky.FeedItem{Author: bsky.Profile{DID: "did:me", Handle: "me.bsky.social"}, URI: "at://did:me/app.bsky.feed.post/3k",
+		Post: bsky.Post{Text: "mine", CreatedAt: "2026-11-01T07:00:00Z"}}
+	m.items = append([]bsky.FeedItem{own}, m.items...)
 	m = step(m, key("d"))
 	if f.joined() != "" || len(m.items) != 3 {
 		t.Fatalf("first d must only ask (calls=%q items=%d)", f.joined(), len(m.items))
@@ -110,10 +111,10 @@ func openCompose(m model) model {
 
 func TestPostsModelIsAFeedOfYourOwnPosts(t *testing.T) {
 	a, _ := newTestApp(t)
-	m := newPostsModel(a, func(context.Context, string) ([]FeedItem, string, error) { return nil, "", nil })
+	m := newPostsModel(a, func(context.Context, string) ([]bsky.FeedItem, string, error) { return nil, "", nil })
 	m.followLoading = false
 	m.width, m.height = 100, 30
-	m.items = []FeedItem{{Author: Profile{DID: "did:me", Handle: "me.bsky.social"}, URI: "at://did:me/app.bsky.feed.post/3k", Post: Post{Text: "mine"}}}
+	m.items = []bsky.FeedItem{{Author: bsky.Profile{DID: "did:me", Handle: "me.bsky.social"}, URI: "at://did:me/app.bsky.feed.post/3k", Post: bsky.Post{Text: "mine"}}}
 	v := m.View()
 	for _, w := range []string{"bskyban posts", "mine", "d delete", "n new post"} {
 		if !strings.Contains(v, w) {
@@ -126,13 +127,13 @@ func TestPostsModelIsAFeedOfYourOwnPosts(t *testing.T) {
 }
 
 func TestReplyReferencesParentAndRoot(t *testing.T) {
-	root := postRef{"at://did:x/app.bsky.feed.post/root", "cidroot"}
-	it := FeedItem{URI: "at://did:x/app.bsky.feed.post/p", CID: "cidp", Root: root}
-	if r := it.replyTo(); r.Parent.CID != "cidp" || r.Root != root {
+	root := bsky.PostRef{URI: "at://did:x/app.bsky.feed.post/root", CID: "cidroot"}
+	it := bsky.FeedItem{URI: "at://did:x/app.bsky.feed.post/p", CID: "cidp", Root: root}
+	if r := it.ReplyTo(); r.Parent.CID != "cidp" || r.Root != root {
 		t.Errorf("reply to a reply = %+v", r)
 	}
-	top := FeedItem{URI: "at://did:x/app.bsky.feed.post/t", CID: "cidt"}
-	if r := top.replyTo(); r.Root != r.Parent || r.Root.CID != "cidt" {
+	top := bsky.FeedItem{URI: "at://did:x/app.bsky.feed.post/t", CID: "cidt"}
+	if r := top.ReplyTo(); r.Root != r.Parent || r.Root.CID != "cidt" {
 		t.Errorf("reply to a top-level post = %+v", r)
 	}
 }
@@ -176,9 +177,9 @@ func TestLikeTogglesAndMarksEveryCopy(t *testing.T) {
 func TestLikeAndReplyOnTheRepostedPostInTheRepostsTab(t *testing.T) {
 	m, f := feedWithTimeline(t)
 	m.tab = 1 // Reposts
-	author := Profile{DID: "did:rando", Handle: "rando.bsky.social"}
-	item := FeedItem{Author: author, URI: "at://did:rando/app.bsky.feed.post/9", CID: "cid9", Post: Post{Text: "buy now"}}
-	m.list = []Profile{author}
+	author := bsky.Profile{DID: "did:rando", Handle: "rando.bsky.social"}
+	item := bsky.FeedItem{Author: author, URI: "at://did:rando/app.bsky.feed.post/9", CID: "cid9", Post: bsky.Post{Text: "buy now"}}
+	m.list = []bsky.Profile{author}
 	m.ctxs = map[string]repostCtx{"did:rando": {Post: item.Post, Item: item, By: []string{"friend.bsky.social"}}}
 	m = step(m, key("h"))
 	if f.joined() != "like" || m.ctxs["did:rando"].Item.Like == "" {
@@ -214,8 +215,8 @@ func TestUpDownStepThroughPostsInPostView(t *testing.T) {
 func TestCurrentPostIsMarkedAndNotRepeatedInRecentPosts(t *testing.T) {
 	m, _ := followingModel(t)
 	m = press(m, "enter")
-	older := Post{Text: "older one", CreatedAt: "2026-11-01T01:00:00Z"}
-	pp := []Post{m.items[0].Post, older}
+	older := bsky.Post{Text: "older one", CreatedAt: "2026-11-01T01:00:00Z"}
+	pp := []bsky.Post{m.items[0].Post, older}
 	m.posts["did:friend"] = &pp
 	v := termtext.StripLinks(m.View())
 	if !strings.Contains(v, "▸ This post · 1 of 2") {
@@ -260,7 +261,7 @@ func TestLNoLongerMovesRightInTheFeedButDoesInReview(t *testing.T) {
 	}
 
 	m.tab = 1 // Reposts
-	m.list = []Profile{{DID: "did:a", Handle: "a.bsky.social"}, {DID: "did:b", Handle: "b.bsky.social"}}
+	m.list = []bsky.Profile{{DID: "did:a", Handle: "a.bsky.social"}, {DID: "did:b", Handle: "b.bsky.social"}}
 	m.ctxs = map[string]repostCtx{}
 	m = press(m, "l")
 	if m.idx != 0 {

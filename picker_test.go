@@ -4,16 +4,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
-func pickerItem() FeedItem {
-	return FeedItem{
+func pickerItem() bsky.FeedItem {
+	return bsky.FeedItem{
 		URI:    "at://did:nbc/app.bsky.feed.post/3k",
-		Author: Profile{DID: "did:nbc", Handle: "nbcnews.com"},
-		Post: Post{
+		Author: bsky.Profile{DID: "did:nbc", Handle: "nbcnews.com"},
+		Post: bsky.Post{
 			Text:     "BREAKING: Reynolds wins, @jennycohn.bsky.social notes. https://nbcnews.to/4zuhIAm. Also email@example.com",
-			Link:     &linkCard{URI: "https://www.nbcnews.com/politics/georgia", Title: "Georgia results"},
+			Link:     &bsky.LinkCard{URI: "https://www.nbcnews.com/politics/georgia", Title: "Georgia results"},
 			Quote:    "@gilduran.com: Make tech billionaires squirm",
 			QuoteURI: "at://did:gil/app.bsky.feed.post/9q",
 		},

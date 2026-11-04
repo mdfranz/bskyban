@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,21 +8,22 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
 func TestRepliesInTheSameThreadAreJoined(t *testing.T) {
 	m, _ := followingModel(t)
-	root := FeedItem{URI: "at://did:cat/app.bsky.feed.post/r", Author: Profile{DID: "did:cat", Handle: "cat.bsky.social"},
-		By: "egg.bsky.social", Post: Post{Text: "what qualifies as a poem?"}}
-	reply := func(uri, handle, parent string) FeedItem {
-		return FeedItem{URI: uri, Author: Profile{DID: "did:" + handle, Handle: handle + ".bsky.social"},
-			Root: postRef{URI: root.URI}, Parent: postRef{URI: parent}, Post: Post{Text: "answer from " + handle, Reply: true}}
+	root := bsky.FeedItem{URI: "at://did:cat/app.bsky.feed.post/r", Author: bsky.Profile{DID: "did:cat", Handle: "cat.bsky.social"},
+		By: "egg.bsky.social", Post: bsky.Post{Text: "what qualifies as a poem?"}}
+	reply := func(uri, handle, parent string) bsky.FeedItem {
+		return bsky.FeedItem{URI: uri, Author: bsky.Profile{DID: "did:" + handle, Handle: handle + ".bsky.social"},
+			Root: bsky.PostRef{URI: root.URI}, Parent: bsky.PostRef{URI: parent}, Post: bsky.Post{Text: "answer from " + handle, Reply: true}}
 	}
 	// same thread, but answering someone who isn't shown above it (the Molly White case)
-	other := FeedItem{URI: "at://did:x/app.bsky.feed.post/x", Author: Profile{DID: "did:x", Handle: "x.bsky.social"},
-		Root: postRef{URI: root.URI}, Parent: postRef{URI: "at://someone-else"}, Post: Post{Text: "unrelated reply", Reply: true}}
-	m.items = []FeedItem{root, reply("at://1", "egg", root.URI), reply("at://2", "kevin", "at://1"), other}
+	other := bsky.FeedItem{URI: "at://did:x/app.bsky.feed.post/x", Author: bsky.Profile{DID: "did:x", Handle: "x.bsky.social"},
+		Root: bsky.PostRef{URI: root.URI}, Parent: bsky.PostRef{URI: "at://someone-else"}, Post: bsky.Post{Text: "unrelated reply", Reply: true}}
+	m.items = []bsky.FeedItem{root, reply("at://1", "egg", root.URI), reply("at://2", "kevin", "at://1"), other}
 	m.cur = 3
 
 	if m.inThread(0) || !m.inThread(1) || !m.inThread(2) || m.inThread(3) {
@@ -58,9 +58,9 @@ func TestRepliesInTheSameThreadAreJoined(t *testing.T) {
 func TestRepostShowsWhenItWasReposted(t *testing.T) {
 	m, _ := followingModel(t)
 	now := time.Now().UTC()
-	m.items = []FeedItem{{URI: "at://p", Author: Profile{DID: "did:cat", Handle: "cat.bsky.social"}, By: "egg.bsky.social",
+	m.items = []bsky.FeedItem{{URI: "at://p", Author: bsky.Profile{DID: "did:cat", Handle: "cat.bsky.social"}, By: "egg.bsky.social",
 		RepostedAt: now.Add(-time.Minute).Format(time.RFC3339),
-		Post:       Post{Text: "poem", CreatedAt: now.Add(-8 * time.Minute).Format(time.RFC3339)}}}
+		Post:       bsky.Post{Text: "poem", CreatedAt: now.Add(-8 * time.Minute).Format(time.RFC3339)}}}
 	m.cur = 1 // not selected, so the plain row is checked
 	h := termtext.StripLinks(termtext.StripANSI(m.itemLines(0, m.listWidth())[0]))
 	if !strings.HasPrefix(strings.TrimSpace(h), "1m") || !strings.Contains(h, "↻ reposted by @egg.bsky.social · written 8m ago") {
@@ -70,9 +70,9 @@ func TestRepostShowsWhenItWasReposted(t *testing.T) {
 
 func TestPostTextLinesUpWithTheAuthorName(t *testing.T) {
 	m, _ := followingModel(t)
-	m.items = []FeedItem{
-		{Author: Profile{DID: "did:a", Handle: "a.bsky.social", DisplayName: "Alpha"}, Post: Post{Text: "body text", Quote: "@q: quoted"}},
-		{Author: Profile{DID: "did:b", Handle: "b.bsky.social", DisplayName: "Beta"}, Post: Post{Text: "other"}},
+	m.items = []bsky.FeedItem{
+		{Author: bsky.Profile{DID: "did:a", Handle: "a.bsky.social", DisplayName: "Alpha"}, Post: bsky.Post{Text: "body text", Quote: "@q: quoted"}},
+		{Author: bsky.Profile{DID: "did:b", Handle: "b.bsky.social", DisplayName: "Beta"}, Post: bsky.Post{Text: "other"}},
 	}
 	for _, cur := range []int{0, 1} { // selected and plain rows
 		m.cur = cur
@@ -96,19 +96,15 @@ func TestPostTextLinesUpWithTheAuthorName(t *testing.T) {
 }
 
 func TestPostViewShowsEngagementAndLink(t *testing.T) {
-	var e feedEntry
-	raw := `{"post":{"uri":"at://did:friend/app.bsky.feed.post/3k","cid":"c","likeCount":120,"repostCount":1,"replyCount":18,"quoteCount":0,
-		"author":{"did":"did:friend","handle":"friend.bsky.social"},"record":{"text":"hi"}}}`
-	if err := json.Unmarshal([]byte(raw), &e); err != nil {
-		t.Fatal(err)
-	}
-	it := e.item()
-	if it.Stats != (postStats{Likes: 120, Reposts: 1, Replies: 18}) {
-		t.Fatalf("stats = %+v", it.Stats)
+	it := bsky.FeedItem{
+		URI: "at://did:friend/app.bsky.feed.post/3k", CID: "c",
+		Author: bsky.Profile{DID: "did:friend", Handle: "friend.bsky.social"},
+		Post:   bsky.Post{Text: "hi"},
+		Stats:  bsky.PostStats{Likes: 120, Reposts: 1, Replies: 18},
 	}
 
 	m, f := feedWithTimeline(t)
-	m.items = []FeedItem{it}
+	m.items = []bsky.FeedItem{it}
 	m = press(m, "enter")
 	v := termtext.StripLinks(termtext.StripANSI(m.View()))
 	if !strings.Contains(v, "120 likes · 1 repost · 18 replies · 0 quotes · open post ↗") {
@@ -133,14 +129,7 @@ func TestPostViewShowsEngagementAndLink(t *testing.T) {
 
 func TestLinkCards(t *testing.T) {
 	uri := "https://www.theatlantic.com/politics/archive/2026/11/x/1"
-	raw := json.RawMessage(`{"$type":"app.bsky.embed.external#view","external":{"uri":"` + uri + `","title":"The Limits of  Trump's Trickery"}}`)
-	c := embedLink(raw)
-	if c == nil || c.Title != "The Limits of Trump's Trickery" {
-		t.Fatalf("card = %+v", c)
-	}
-	if got := describeEmbed(raw); len(got) != 0 {
-		t.Errorf("a link card is no longer an attachment string: %v", got)
-	}
+	c := bsky.LinkCard{URI: uri, Title: "The Limits of Trump's Trickery"}
 	// the URL is always shown in full (terminals detect plain URLs), never twice
 	for text, want := range map[string]string{
 		"read this":                             "↗ The Limits of Trump's Trickery " + uri,
@@ -148,16 +137,16 @@ func TestLinkCards(t *testing.T) {
 		"the limits of trump's trickery":        "↗ " + uri,
 		"the limits of trump's trickery " + uri: "",
 	} {
-		if got := c.label(text); got != want {
+		if got := cardLabel(c, text); got != want {
 			t.Errorf("label(%q) = %q, want %q", text, got, want)
 		}
 	}
-	if got := (linkCard{URI: "https://bit.ly/3V270SA"}).label(""); got != "↗ https://bit.ly/3V270SA" {
+	if got := cardLabel(bsky.LinkCard{URI: "https://bit.ly/3V270SA"}, ""); got != "↗ https://bit.ly/3V270SA" {
 		t.Errorf("untitled card = %q", got)
 	}
 
 	long := "https://www.washingtonpost.com/technology/2026/11/03/google-deepmind-staff-protest-lifetime-ban/"
-	p := Post{Text: "A big night " + long, Link: &linkCard{URI: "https://bit.ly/3V270SA", Title: "The Limits of Trump's Midterm Trickery"}}
+	p := bsky.Post{Text: "A big night " + long, Link: &bsky.LinkCard{URI: "https://bit.ly/3V270SA", Title: "The Limits of Trump's Midterm Trickery"}}
 	if got := preview(p); got != "A big night "+long+" ↗ The Limits of Trump's Midterm Trickery https://bit.ly/3V270SA" {
 		t.Errorf("preview should keep URLs whole: %q", got)
 	}
@@ -201,8 +190,8 @@ func TestHintsArePinnedToTheBottomRow(t *testing.T) {
 
 	m.items = nil
 	for i := 0; i < 40; i++ { // more posts than fit
-		m.items = append(m.items, FeedItem{URI: fmt.Sprintf("at://%d", i), Author: Profile{DID: "did:x", Handle: "x.bsky.social"},
-			Post: Post{Text: strings.Repeat("long text ", 40)}})
+		m.items = append(m.items, bsky.FeedItem{URI: fmt.Sprintf("at://%d", i), Author: bsky.Profile{DID: "did:x", Handle: "x.bsky.social"},
+			Post: bsky.Post{Text: strings.Repeat("long text ", 40)}})
 	}
 	check("full list", m)
 	check("post view", press(m, "enter"))
@@ -216,9 +205,9 @@ func TestHintsArePinnedToTheBottomRow(t *testing.T) {
 
 func TestReplyNamesWhoItAnswers(t *testing.T) {
 	m, _ := followingModel(t)
-	m.items = []FeedItem{
-		{URI: "at://a", Author: Profile{DID: "did:gil", Handle: "gilduran.com"}, Post: Post{Text: "Thank you!", Reply: true, ParentHandle: "drjanicekirsch.bsky.social"}},
-		{URI: "at://b", Author: Profile{DID: "did:x", Handle: "x.bsky.social"}, Post: Post{Text: "?", Reply: true}},
+	m.items = []bsky.FeedItem{
+		{URI: "at://a", Author: bsky.Profile{DID: "did:gil", Handle: "gilduran.com"}, Post: bsky.Post{Text: "Thank you!", Reply: true, ParentHandle: "drjanicekirsch.bsky.social"}},
+		{URI: "at://b", Author: bsky.Profile{DID: "did:x", Handle: "x.bsky.social"}, Post: bsky.Post{Text: "?", Reply: true}},
 	}
 	m.cur = 5
 	if h := termtext.StripANSI(m.itemLines(0, m.listWidth())[0]); !strings.Contains(h, "↳ replying to @drjanicekirsch.bsky.social") {
@@ -231,9 +220,9 @@ func TestReplyNamesWhoItAnswers(t *testing.T) {
 
 func TestListAgeLinksToThePost(t *testing.T) {
 	m, _ := followingModel(t)
-	m.items = []FeedItem{
-		{URI: "at://did:a/app.bsky.feed.post/3k", Author: Profile{DID: "did:a", Handle: "a.bsky.social"}, Post: Post{Text: "hi"}},
-		{Author: Profile{DID: "did:b", Handle: "b.bsky.social"}, Post: Post{Text: "no uri"}},
+	m.items = []bsky.FeedItem{
+		{URI: "at://did:a/app.bsky.feed.post/3k", Author: bsky.Profile{DID: "did:a", Handle: "a.bsky.social"}, Post: bsky.Post{Text: "hi"}},
+		{Author: bsky.Profile{DID: "did:b", Handle: "b.bsky.social"}, Post: bsky.Post{Text: "no uri"}},
 	}
 	link := "\x1b]8;;https://bsky.app/profile/a.bsky.social/post/3k\x1b\\"
 	for _, cur := range []int{0, 1} { // as the selected row and as a plain row
@@ -248,25 +237,5 @@ func TestListAgeLinksToThePost(t *testing.T) {
 	}
 	if h := m.itemLines(1, m.listWidth())[0]; strings.Contains(h, "\x1b]8;;") {
 		t.Errorf("no link without a post URI: %q", h)
-	}
-}
-
-func TestMediaMarkers(t *testing.T) {
-	for raw, want := range map[string]string{
-		`{"$type":"app.bsky.embed.images","images":[{"alt":"a  cat"}]}`:            "▣ a cat",
-		`{"$type":"app.bsky.embed.images","images":[{"alt":""},{"alt":"map"},{}]}`: "▣×3 map",
-		`{"$type":"app.bsky.embed.images","images":[{}]}`:                          "▣",
-		`{"$type":"app.bsky.embed.video","alt":"clip"}`:                            "▶ video clip",
-	} {
-		if got := describeEmbed(json.RawMessage(raw)); len(got) != 1 || got[0] != want {
-			t.Errorf("%s: got %q, want %q", raw, got, want)
-		}
-	}
-	for _, text := range []string{"aaaa bbbb ▣×3 county map", "aaaa bbbb ▶ video clip"} {
-		for _, l := range termtext.Wrap(text, 10) {
-			if strings.HasSuffix(l, "▣×3") || strings.HasSuffix(l, "▶") {
-				t.Errorf("marker stranded at a line end: %q", termtext.Wrap(text, 10))
-			}
-		}
 	}
 }
