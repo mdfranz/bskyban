@@ -100,10 +100,11 @@ bskyban review --backlog    # also revisit followers you skipped before
 | `Home` / `End` | first / last follower |
 | `↑` / `↓`, `PgUp` / `PgDn` | scroll the posts panel |
 | `b` | block (creates a block on your account immediately) |
-| `f` | follow (creates a follow on your account immediately; undo with `u`) |
+| `f` | follow (creates a follow on your account immediately; undo with `U`) |
 | `k` | keep (record as reviewed, no action) |
 | `s` | skip (hide from the default view; return with `--backlog`) |
-| `u` | undo the last decision (restores whatever was recorded before) |
+| `u` | unfollow the selected account (press twice to confirm) |
+| `U` | undo the last decision (restores whatever was recorded before) |
 | `q` | quit |
 
 Following someone records them as `followed`, so they leave the new list. Changing your
@@ -154,12 +155,15 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 |---|---|---|
 | `↑` / `↓` | move | previous / next post |
 | `PgUp` / `PgDn` | move a page | scroll the panel |
-| `Enter` / `→` | open post | next post |
+| `→` | open post | next post |
+| `Enter` | open link picker | open link picker |
 | `Esc` / `Backspace` | | back to list |
 | `←` | | previous post |
 | `b` | block the author | block the author |
 | `f` | follow the author | follow the author |
-| `k` / `u` | keep / undo | keep / undo |
+| `F` | browse accounts the author follows | browse accounts the author follows |
+| `k` / `U` | keep / undo | keep / undo |
+| `u` | unfollow the author (press twice) | unfollow the author (press twice) |
 | `r` | reply to the selected post | reply to this post |
 | `h` | like (again to remove your like) | like / unlike |
 | `o` | pick a link in the post to open | pick a link in the post to open |
@@ -167,15 +171,14 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 | `n` | write a new post | write a new post |
 | `d` | delete your own post (press twice) | delete your own post (press twice) |
 | `Tab` | switch tab | switch tab |
-| `R` | check for new posts / insert them | check for new posts / insert them |
+| `R` | go to the top, check for new posts / insert them | go to the top, check for new posts / insert them |
 | `q` | quit | quit |
 
 In the feed `h` is the heart and `l` does nothing: use the arrow keys to move. The vim-style `h`/`l` pair only applies to the follower review above.
 
-`o` numbers every link in the selected post along the bottom: the post on bsky.app, its link
-card, URLs in its text, the quoted post, mentioned accounts and the author's profile. Press
-`1`–`9` to open one, `o` again for the post's only outside link (or the post itself when
-there are none or several), or any other key to close it.
+`Enter` or `o` opens a picker containing the post on bsky.app, its link card,
+URLs in its text, the quoted post, mentioned accounts and the author's profile.
+Use the arrow keys to highlight a link, `Enter` to open it, or `Esc` to cancel.
 
 `i` opens a post's images (`▣`) in your browser: `$BROWSER` if set (on ChromeOS Linux
 that is `garcon-url-handler`, which opens Chrome), otherwise `open` on macOS or `xdg-open`
@@ -195,9 +198,9 @@ timeline loads as you near the end.
 posts. If you are on the first post of the list they are added straight away and the
 newest becomes the selection. Otherwise they are *not* inserted while you read: the
 header just shows `Following (+3 new)`, so the list never shifts under you. Press `R` to
-insert them at the top (with `--fancy`, inserted posts get a coloured bar and a `new`
-tag that fade out over about 2 seconds); the post you were on stays selected (from the very top of the list, the
-newest post is selected instead). `R` also refreshes right away if nothing is waiting.
+jump to the top of the list (closing any open post) and insert them there, with the newest
+selected (with `--fancy`, inserted posts get a coloured bar and a `new` tag that fade out
+over about 2 seconds). `R` also refreshes right away if nothing is waiting.
 Newly reposted authors you haven't handled are added to the end of the Reposts queue
 (its count grows) without moving the account you're reviewing. A failed check shows
 `⚠ refresh failed` in the header and clears itself on the next good one. One check is

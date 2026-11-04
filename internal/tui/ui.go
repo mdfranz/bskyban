@@ -78,11 +78,12 @@ type (
 		err  error
 	}
 	actMsg struct {
-		undo   undoEntry
-		isUndo bool
-		newURI string // block/follow record created by this action, if any
-		lifted bool   // an earlier block/follow record was deleted on the way
-		err    error
+		undo       undoEntry
+		isUndo     bool
+		isUnfollow bool
+		newURI     string // block/follow record created by this action, if any
+		lifted     bool   // an earlier block/follow record was deleted on the way
+		err        error
 	}
 )
 
@@ -132,7 +133,9 @@ type model struct {
 	animating bool                 // an animTickMsg is scheduled
 	now       func() time.Time
 
+	pickIndex int             // highlighted link in the picker
 	picking   []pickLink      // links offered by o, until one is chosen or it closes
+	follows   *followsBrowser // accounts followed by the selected author
 	composing bool            // writing a new post (feed mode)
 	replyTo   *bsky.FeedItem  // ...as an answer to this post
 	input     textinput.Model // the post being written
@@ -141,11 +144,13 @@ type model struct {
 	quitting bool    // wait for the active action to be saved and audited
 	pending  *actMsg // remote action completed, local save needs retrying
 	spin     spinner.Model
+	spinOn   bool                // a spinner tick is scheduled
+	clips    map[clipKey]clipped // wrapped list text, by item and width
 	profiles map[string]*bsky.Profile
 	posts    map[string]*[]bsky.Post // nil value = in flight
 	records  map[string]string       // block/follow records behind current decisions (this session)
 	history  []undoEntry
-	confirm  string // DID awaiting a second `b` to block someone you follow
+	confirm  string // action awaiting confirmation
 	scroll   int    // right-panel scroll offset
 	status   string
 	err      error
@@ -167,7 +172,8 @@ func newModel(a *app.App, title string, load loadFunc) model {
 		label = "New followers"
 	}
 	return model{
-		a: a, title: title, candLabel: label, loader: load, loading: true, spin: sp,
+		a: a, title: title, candLabel: label, loader: load, loading: true, spin: sp, spinOn: true, // Init ticks
+		clips:    map[clipKey]clipped{},
 		tabs:     []tabID{tabCandidates},
 		profiles: map[string]*bsky.Profile{}, posts: map[string]*[]bsky.Post{}, records: map[string]string{},
 		fresh: map[string]time.Time{}, now: time.Now,
@@ -447,12 +453,43 @@ func (m model) prefetch() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// Update handles msg, then starts the spinner if something it shows began loading.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if nm, ok := next.(model); ok && !nm.spinOn && nm.needsSpin() {
+		nm.spinOn = true
+		return nm, tea.Batch(cmd, nm.spin.Tick)
+	}
+	return next, cmd
+}
+
+// needsSpin reports whether the screen shows a spinner. It only ticks (and so
+// redraws the screen) while something is loading.
+func (m model) needsSpin() bool {
+	if m.loading || m.followLoading || m.busy {
+		return true
+	}
+	if m.active() == tabCandidates || m.inPost {
+		if p, ok := m.subject(); ok {
+			return m.profiles[p.DID] == nil || m.posts[p.DID] == nil
+		}
+	}
+	return false
+}
+
+func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		if msg.Width != m.width {
+			clear(m.clips) // wrapped for the old width
+		}
 		m.width, m.height = msg.Width, msg.Height
 		m = m.ensureVisible()
 	case spinner.TickMsg:
+		if !m.needsSpin() {
+			m.spinOn = false // nothing is loading: let the tick chain end
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
@@ -532,6 +569,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case actMsg:
 		return m.applyAct(msg)
+	case followsPageMsg:
+		return m.applyFollowsPage(msg)
 	case postedMsg:
 		return m.applyPosted(msg)
 	case deletedMsg:
@@ -569,7 +608,11 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 	}
 	var err error
 	did := e.profile.DID
-	if msg.isUndo {
+	if msg.isUnfollow {
+		if entry, ok := m.a.State.Entries[did]; ok && entry.Decision == store.Followed {
+			err = m.a.State.Delete(did)
+		}
+	} else if msg.isUndo {
 		if e.prev != nil {
 			err = m.a.State.Put(did, *e.prev)
 		} else {
@@ -589,7 +632,24 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.pending = nil
-	if msg.isUndo {
+	if msg.isUnfollow {
+		delete(m.records, did)
+		m.history = slices.DeleteFunc(m.history, func(h undoEntry) bool { return h.profile.DID == did })
+		for i := range m.list {
+			if m.list[i].DID == did {
+				m.list[i].Viewer.Following = ""
+			}
+		}
+		for i := range m.items {
+			if m.items[i].Author.DID == did {
+				m.items[i].Author.Viewer.Following = ""
+			}
+		}
+		if p := m.profiles[did]; p != nil {
+			p.Viewer.Following = ""
+		}
+		m.status = fmt.Sprintf("unfollowed @%s", e.profile.Handle)
+	} else if msg.isUndo {
 		delete(m.records, did)
 		if msg.newURI != "" {
 			m.records[did] = msg.newURI
@@ -684,6 +744,9 @@ func (m model) auditEvent(msg actMsg) store.AuditEvent {
 		}
 		ev.Prev = e.decision
 	}
+	if msg.isUnfollow {
+		ev.Action, ev.Record = "unfollow", e.record
+	}
 	return ev
 }
 
@@ -692,7 +755,7 @@ func (m model) auditEvent(msg actMsg) store.AuditEvent {
 func (m model) auditEvents(msg actMsg) []store.AuditEvent {
 	e := msg.undo
 	main := m.auditEvent(msg)
-	if !msg.isUndo && e.prev != nil && app.IsRemote(e.prev.Decision) && e.prev.Decision != e.decision {
+	if !msg.isUndo && !msg.isUnfollow && e.prev != nil && app.IsRemote(e.prev.Decision) && e.prev.Decision != e.decision {
 		lift := main
 		lift.Action, lift.Detail, lift.Record = liftAction[e.prev.Decision], "lifted by "+e.decision, ""
 		return []store.AuditEvent{lift, main}
@@ -707,6 +770,9 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.picking != nil && key != "ctrl+c" {
 		return m.pickKey(key)
+	}
+	if m.follows != nil && key != "ctrl+c" {
+		return m.followsKey(key)
 	}
 	switch key {
 	case "q", "ctrl+c":
@@ -732,6 +798,12 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.busy {
 		return m, nil
 	}
+	if key == "u" {
+		return m.unfollowKey(confirm)
+	}
+	if key == "F" {
+		return m.openFollows()
+	}
 	if key == "n" && m.timeline != nil {
 		m.composing, m.replyTo, m.status, m.err = true, nil, "", nil
 		m.input.SetValue("")
@@ -756,9 +828,13 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openImagesKey()
 	}
 	if key == "R" && m.timeline != nil {
+		// R takes you to the top of the feed, where new posts land: the newest is selected.
+		m.cur, m.listTop, m.inPost = 0, 0, false
+		if m.active() == tabFollowing {
+			m.scroll = 0
+		}
 		if len(m.newPosts) > 0 {
 			m = m.applyPending() // what the header announced; no need to wait for or start a check
-			m.scroll = 0
 			m, anim := m.startAnim()
 			return m, tea.Batch(m.prefetch(), anim)
 		}
@@ -1049,7 +1125,7 @@ func (m model) candKey(key string) (model, tea.Cmd) {
 		return move(0)
 	case "end":
 		return move(len(m.list) - 1)
-	case "u":
+	case "U":
 		return m.undo()
 	}
 	p, ok := m.subject()
@@ -1104,13 +1180,15 @@ func (m model) browseKey(key, confirm string) (model, tea.Cmd) {
 			m.inPost, m.scroll = true, 0
 		}
 	case "enter":
-		if !m.inPost && len(m.items) > 0 {
+		if m.timeline != nil {
+			return m.openKey()
+		} else if !m.inPost && len(m.items) > 0 {
 			m.inPost, m.scroll = true, 0
 		}
 	case "esc", "backspace":
 		m.inPost, m.scroll = false, 0
 		m = m.ensureVisible()
-	case "u":
+	case "U":
 		return m.undo()
 	case "d":
 		return m.deleteKey(confirm)
@@ -1147,6 +1225,47 @@ func (m model) maybeLoadMore() (model, tea.Cmd) {
 	}
 	m.moreBusy = true
 	return m, loadTimeline(m.timeline, m.tlCursor)
+}
+
+// unfollowKey confirms the selected account before removing its follow record.
+func (m model) unfollowKey(confirm string) (model, tea.Cmd) {
+	p, ok := m.subject()
+	if !ok {
+		return m, nil
+	}
+	if confirm != "unfollow:"+p.DID {
+		m.confirm = "unfollow:" + p.DID
+		m.status = fmt.Sprintf("Unfollow @%s? Press u again to confirm.", p.Handle)
+		return m, nil
+	}
+	uri := p.Viewer.Following
+	if uri == "" && m.a.State.Entries[p.DID].Decision == store.Followed {
+		uri = m.records[p.DID]
+	}
+	idx := m.idx
+	if m.active() != tabCandidates {
+		idx = m.cur
+	}
+	e := undoEntry{tab: m.active(), idx: idx, profile: p, decision: store.Followed, record: uri}
+	c := m.a.Client
+	m.busy, m.err, m.status = true, nil, ""
+	return m, func() tea.Msg {
+		msg := actMsg{undo: e, isUnfollow: true}
+		if msg.undo.record == "" {
+			profile, err := c.GetProfile(context.Background(), p.DID)
+			if err != nil {
+				msg.err = err
+				return msg
+			}
+			msg.undo.record = profile.Viewer.Following
+		}
+		if msg.undo.record == "" {
+			msg.err = fmt.Errorf("you do not follow @%s", p.Handle)
+			return msg
+		}
+		msg.err = c.Unfollow(context.Background(), msg.undo.record)
+		return msg
+	}
 }
 
 // decideKey applies decision to p, unless that is already recorded.
@@ -1299,19 +1418,18 @@ func (m model) ensureVisible() model {
 		return m
 	}
 	m.cur = min(max(m.cur, 0), len(m.items)-1)
-	m.listTop = min(m.listTop, m.cur)
-	w := m.listWidth()
-	for m.listTop < m.cur {
-		h := 0
-		for i := m.listTop; i <= m.cur; i++ {
-			h += len(m.itemLines(i, w))
-		}
-		if h <= m.avail() {
+	m.listTop = max(min(m.listTop, m.cur), 0)
+	// Walk up from the selection to the highest item that still fits with it on
+	// screen; that only renders one screenful, however far the selection jumped.
+	w, room, h := m.listWidth(), m.avail(), 0
+	low := m.cur
+	for i := m.cur; i >= m.listTop; i-- {
+		if h += len(m.itemLines(i, w)); h > room {
 			break
 		}
-		m.listTop++
+		low = i
 	}
-	m.listTop = max(m.listTop, 0)
+	m.listTop = low
 	return m
 }
 
@@ -1504,10 +1622,11 @@ func joinColumns(left, right []string, leftW int) string {
 	return b.String()
 }
 
-func (m model) panelsView(pos string) string {
+// panelsView puts the profile beside (or above) rl, the lines from rightLines.
+func (m model) panelsView(pos string, rl []string) string {
 	lw, _, stacked := m.panelWidths()
 	left := m.profilePanel(lw, pos)
-	right := window(m.rightLines(), m.scroll, m.rightAvail())
+	right := window(rl, m.scroll, m.rightAvail())
 	if stacked {
 		return strings.Join(append(append(left, ""), right...), "\n") + "\n"
 	}
@@ -1515,21 +1634,22 @@ func (m model) panelsView(pos string) string {
 }
 
 // scrollPos is the posts-panel scroll position as "[34%]", or "" if everything fits.
-func (m model) scrollPos() string {
-	n, av := len(m.rightLines()), m.rightAvail()
+func (m model) scrollPos(rl []string) string {
+	n, av := len(rl), m.rightAvail()
 	if n <= av {
 		return ""
 	}
 	return dimStyle.Render(fmt.Sprintf("   [%d%%]", (min(m.scroll, n-av)*100)/max(n-av, 1)))
 }
 
-func (m model) tabBar() string {
+// tabBar is the title row; rl (the right panel's lines) gives the scroll position.
+func (m model) tabBar(rl []string) string {
 	if len(m.tabs) == 1 {
 		title := titleStyle.Render("bskyban " + m.title)
 		if n := len(m.newPosts); n > 0 {
 			title += fmt.Sprintf(" (+%d new)", n)
 		}
-		return title + m.scrollPos()
+		return title + m.scrollPos(rl)
 	}
 	parts := []string{titleStyle.Render("bskyban")}
 	for i, t := range m.tabs {
@@ -1552,16 +1672,22 @@ func (m model) tabBar() string {
 	if m.refreshErr != nil {
 		flag = warnStyle.Render("   ⚠ refresh failed")
 	}
-	return strings.Join(parts, "   ") + flag + m.scrollPos()
+	return strings.Join(parts, "   ") + flag + m.scrollPos(rl)
 }
 
 // hintItems are the key hints for the current screen.
 func (m model) hintItems() []string {
+	if m.follows != nil {
+		if m.err != nil {
+			return []string{"R retry", "esc back"}
+		}
+		return []string{"↑ ↓ move", "enter open profile", "esc back"}
+	}
 	if m.pending != nil {
 		return []string{"r retry saving (actions and quit wait for a successful save)"}
 	}
 	if m.picking != nil {
-		return []string{"1-" + fmt.Sprint(len(m.picking)) + " open", "o default", "any other key closes"}
+		return []string{"↑ ↓ select", "enter open", "esc cancel"}
 	}
 	if m.composing {
 		if m.replyTo != nil {
@@ -1572,11 +1698,14 @@ func (m model) hintItems() []string {
 	var items []string
 	switch {
 	case m.active() == tabCandidates:
-		items = []string{"← → move", "↑ ↓ scroll", "b block", "f follow", "k keep", "s skip", "u undo"}
+		items = []string{"← → move", "↑ ↓ scroll", "b block", "f follow", "k keep", "s skip", "u unfollow", "U undo"}
 	case m.inPost:
-		items = []string{"↑ ↓ prev/next", "PgUp PgDn scroll", "esc back", "b block", "f follow", "k keep", "u undo"}
+		items = []string{"↑ ↓ prev/next", "PgUp PgDn scroll", "esc back", "b block", "f follow", "k keep", "u unfollow", "U undo"}
 	default:
-		items = []string{"↑ ↓ move", "enter open", "b block", "f follow", "k keep", "u undo"}
+		items = []string{"↑ ↓ move", "enter open", "b block", "f follow", "k keep", "u unfollow", "U undo"}
+		if m.timeline != nil {
+			items[1] = "→ post"
+		}
 	}
 	if len(m.tabs) > 1 {
 		items = append(items, "tab switch")
@@ -1585,12 +1714,13 @@ func (m model) hintItems() []string {
 		if _, own := m.ownItem(); own {
 			items = append(items, "d delete")
 		}
-		items = append(items, "r reply", "h like", "o open link")
+		items = append(items, "r reply", "h like", "enter/o open link")
 		if _, ok := m.postImages(); ok {
 			items = append(items, "i open images")
 		}
 		items = append(items, "n new post", "R refresh")
 	}
+	items = append(items, "F following")
 	return append(items, "q quit")
 }
 
@@ -1629,11 +1759,15 @@ func (m model) hint() string { return strings.Join(m.hintLines(), "\n") }
 // the content above is padded (or, if it is ever too tall, cut) to fit the window.
 func (m model) View() string {
 	var b strings.Builder
-	b.WriteString(m.tabBar() + "\n\n")
+	var rl []string // built once: the tab bar's scroll position and the panels both use it
+	if !m.composing && m.follows == nil {
+		rl = m.rightLines()
+	}
+	b.WriteString(m.tabBar(rl) + "\n\n")
 	if m.composing {
 		b.WriteString(m.composeView())
 	} else {
-		b.WriteString(m.content())
+		b.WriteString(m.content(rl))
 	}
 
 	var bottom []string
@@ -1648,7 +1782,7 @@ func (m model) View() string {
 	case m.moreBusy:
 		bottom = append(bottom, dimStyle.Render("loading more…"))
 	case m.picking != nil:
-		bottom = append(bottom, warnStyle.Render(strings.Join(m.pickerLines(), "\n")))
+		bottom = append(bottom, strings.Join(m.pickerLines(), "\n"))
 	case m.status != "" && !m.composing:
 		bottom = append(bottom, warnStyle.Render(m.status))
 	}
@@ -1669,8 +1803,11 @@ func (m model) View() string {
 	return strings.Join(append(append(top, ""), bottom...), "\n")
 }
 
-// content is the active tab's main area.
-func (m model) content() string {
+// content is the active tab's main area; rl is the right panel from rightLines.
+func (m model) content(rl []string) string {
+	if m.follows != nil {
+		return m.followsView()
+	}
 	var b strings.Builder
 	switch m.active() {
 	case tabCandidates:
@@ -1680,7 +1817,7 @@ func (m model) content() string {
 		case m.idx >= len(m.list):
 			b.WriteString(okStyle.Render("All caught up — nothing new.") + " (← to go back)\n")
 		default:
-			b.WriteString(m.panelsView(fmt.Sprintf("%d of %d", m.idx+1, len(m.list))))
+			b.WriteString(m.panelsView(fmt.Sprintf("%d of %d", m.idx+1, len(m.list)), rl))
 		}
 	default:
 		switch {
@@ -1689,7 +1826,7 @@ func (m model) content() string {
 		case len(m.items) == 0:
 			b.WriteString(dimStyle.Render("Your timeline is empty.") + "\n")
 		case m.inPost:
-			b.WriteString(m.panelsView(fmt.Sprintf("%d of %d", m.cur+1, len(m.items))))
+			b.WriteString(m.panelsView(fmt.Sprintf("%d of %d", m.cur+1, len(m.items)), rl))
 		default:
 			b.WriteString(m.listView())
 		}
@@ -1747,6 +1884,29 @@ func clip(text string, w, n int) []string {
 		lines[n-1] = termtext.TruncateWidth(lines[n-1]+" …", w)
 	}
 	return lines
+}
+
+type (
+	clipKey struct {
+		key string // FeedItem.Key()
+		w   int
+	}
+	clipped struct{ text, quote []string }
+)
+
+// bodyLines is the item's clipped text and quoted post at width bw. Wrapping is
+// most of the cost of a frame and a post's text never changes once fetched, so
+// each item is wrapped once per width (the cache is cleared when the width changes).
+func (m model) bodyLines(it bsky.FeedItem, bw int) (text, quote []string) {
+	k := clipKey{it.Key(), bw}
+	if c, ok := m.clips[k]; ok {
+		return c.text, c.quote
+	}
+	c := clipped{clip(it.Post.Preview(), bw, previewLines), clip(strings.Join(strings.Fields(it.Post.Quote), " "), bw-2, quoteLines)}
+	if m.clips != nil && it.URI != "" { // without a URI, items cannot be told apart
+		m.clips[k] = c
+	}
+	return c.text, c.quote
 }
 
 // inThread reports whether item i answers the post right above it, so the list
@@ -1811,7 +1971,7 @@ func (m model) itemLines(i, w int) []string {
 	if it.By != "" {
 		add("↻ reposted by @"+it.By, accentStyle)
 		if posted := ageOf(it.Post.CreatedAt); it.RepostedAt != "" && posted != age {
-			add("· written "+posted+" ago", dimStyle)
+			add("· written "+posted+" ago", headingStyle.Bold(false).Italic(true))
 		}
 	}
 	if it.Post.Reply {
@@ -1838,20 +1998,30 @@ func (m model) itemLines(i, w int) []string {
 	}
 	tailPlain, tail := strings.Join(tagsPlain, " "), strings.Join(tags, " ")
 	who = termtext.TruncateWidth(who, max(w-(2+gw+5+1+1+lipgloss.Width(tailPlain)), 10))
+	namePart, handlePart := who, ""
+	if strings.HasPrefix(who, name+" (@") {
+		namePart, handlePart = who[:len(name)], who[len(name):]
+	}
 
 	// the post's own text, then the quoted post on lines of its own, both lined up
 	// under the author's name: lead (2) + age (5) + space = column 8
 	const indent = "      " // after the 2-column lead
 	bw := w - 2 - len(indent) - gw
-	text := clip(it.Post.Preview(), bw, previewLines)
-	quote := clip(strings.Join(strings.Fields(it.Post.Quote), " "), bw-2, quoteLines)
+	text, quote := m.bodyLines(it, bw)
 	if len(text) == 0 && len(quote) == 0 {
 		text = []string{"(no text)"}
 	}
 
 	var lines []string
 	if i == m.cur {
-		lines = append(lines, selStyle.Width(w).Render(strings.TrimRight(fmt.Sprintf("▸ %s%s %s %s", gutter, ageLink(it, age), selStyle.Bold(true).Render(who), tailPlain), " ")))
+		styledWho := selStyle.Bold(true).Render(namePart) + selStyle.Foreground(theme.Heading).Render(handlePart)
+		selectedTags := append([]string(nil), tagsPlain...)
+		for j, tag := range selectedTags {
+			if strings.HasPrefix(tag, "· written ") {
+				selectedTags[j] = selStyle.Foreground(theme.Heading).Italic(true).Render(tag)
+			}
+		}
+		lines = append(lines, selStyle.Width(w).Render(strings.TrimRight(fmt.Sprintf("▸ %s%s %s %s", gutter, ageLink(it, age), styledWho, strings.Join(selectedTags, " ")), " ")))
 		for _, l := range text {
 			lines = append(lines, selStyle.Width(w).Render("  "+gutter+indent+l))
 		}
@@ -1864,7 +2034,8 @@ func (m model) itemLines(i, w int) []string {
 			lead = fresh.Render("┃") + " "
 		}
 		lead += gutter
-		header := fmt.Sprintf("%s%s %s", lead, dimStyle.Render(ageLink(it, age)), titleStyle.Render(who))
+		styledWho := titleStyle.Render(namePart) + headingStyle.Bold(false).Render(handlePart)
+		header := fmt.Sprintf("%s%s %s", lead, dimStyle.Render(ageLink(it, age)), styledWho)
 		if tail != "" {
 			header += " " + tail
 		}

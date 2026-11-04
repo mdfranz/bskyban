@@ -46,66 +46,54 @@ func TestPostLinksListsEverythingOnceInOrder(t *testing.T) {
 	}
 }
 
+func TestEnterOpensLinkPicker(t *testing.T) {
+	m, _ := feedWithTimeline(t)
+	m.items[0] = pickerItem()
+	for _, inPost := range []bool{false, true} {
+		m.inPost = inPost
+		m = press(m, "enter")
+		if len(m.picking) == 0 || m.inPost != inPost {
+			t.Fatalf("enter inPost=%v: picking=%v inPost=%v", inPost, m.picking, m.inPost)
+		}
+		m = press(m, "esc")
+	}
+}
+
 func TestPickerOpensTheChosenLink(t *testing.T) {
 	opened := withBrowser(t, nil)
 	m, _ := feedWithTimeline(t)
 	m.items[0] = pickerItem()
-	if !strings.Contains(m.hint(), "o open link") {
-		t.Errorf("hint should offer o: %s", m.hint())
-	}
-
-	m = press(m, "o")
-	if len(m.picking) != 6 {
-		t.Fatalf("picking = %d links", len(m.picking))
+	m = press(m, "enter")
+	if len(m.picking) != 6 || m.pickIndex != 0 {
+		t.Fatalf("picker = %d links, selection %d", len(m.picking), m.pickIndex)
 	}
 	v := termtext.StripANSI(m.View())
-	for _, w := range []string{"open:", "1 post on bsky.app", "2 ↗ Georgia results", "6 @nbcnews.com's profile", "1-6 open"} {
+	for _, w := range []string{"open:", "▸ post on bsky.app", "↗ Georgia results", "↑ ↓ select", "enter open"} {
 		if !strings.Contains(v, w) {
-			t.Errorf("picker footer missing %q:\n%s", w, v)
+			t.Errorf("picker missing %q:\n%s", w, v)
 		}
 	}
-	m = press(m, "2")
+	m = press(m, "down")
+	if v = termtext.StripANSI(m.View()); !strings.Contains(v, "▸ ↗ Georgia results") {
+		t.Errorf("selection did not move:\n%s", v)
+	}
+	m = press(m, "enter")
 	if len(*opened) != 1 || (*opened)[0] != "https://www.nbcnews.com/politics/georgia" || m.picking != nil {
-		t.Fatalf("2 should open the card and close the picker: opened=%v picking=%v", *opened, m.picking != nil)
-	}
-	if !strings.Contains(m.status, "opened ↗ Georgia results") {
-		t.Errorf("status = %q", m.status)
-	}
-
-	// any other key closes it without opening, and is not acted on
-	m = press(m, "o")
-	m = press(m, "b")
-	if m.picking != nil || len(*opened) != 1 || m.confirm != "" || m.busy {
-		t.Errorf("b should only close the picker: picking=%v opened=%v busy=%v", m.picking != nil, *opened, m.busy)
+		t.Fatalf("enter should open the selected link: opened=%v picking=%v", *opened, m.picking != nil)
 	}
 	m = press(m, "o")
-	m = press(m, "9") // past the end
-	if len(*opened) != 1 {
-		t.Errorf("a number past the list opens nothing: %v", *opened)
+	m = press(m, "up")
+	if m.pickIndex != 0 {
+		t.Fatal("selection moved before first link")
 	}
-}
-
-func TestOOpensTheOnlyOutsideLink(t *testing.T) {
-	opened := withBrowser(t, nil)
-	m, _ := feedWithTimeline(t)
-	it := pickerItem()
-	it.Post.Text = "no urls here"
-	m.items[0] = it
-	m = press(press(m, "o"), "o")
-	if strings.Join(*opened, ",") != it.Post.Link.URI {
-		t.Errorf("o o should open the card when it is the only outside link: %v", *opened)
+	for i := 0; i < 10; i++ {
+		m = press(m, "down")
 	}
-
-	it.Post.Link = nil // no outside links: o o opens the post itself
-	m.items[0] = it
-	m = press(press(m, "o"), "o")
-	if (*opened)[1] != "https://bsky.app/profile/nbcnews.com/post/3k" {
-		t.Errorf("o o without outside links should open the post: %v", *opened)
+	if m.pickIndex != 5 || !strings.Contains(termtext.StripANSI(m.View()), "▸ @nbcnews.com's profile") {
+		t.Fatal("last link should be selectable and visible")
 	}
-
-	m.items[0] = pickerItem() // two outside links: o o picks the post, not a guess
-	m = press(press(m, "o"), "o")
-	if (*opened)[2] != "https://bsky.app/profile/nbcnews.com/post/3k" {
-		t.Errorf("o o with several outside links should open the post: %v", *opened)
+	m = press(m, "esc")
+	if m.picking != nil || len(*opened) != 1 {
+		t.Fatal("escape should cancel")
 	}
 }
