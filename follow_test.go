@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/mdfranz/bskyban/internal/store"
 )
 
 func TestFollowKeyFollowsAndUndoUnfollows(t *testing.T) {
@@ -12,7 +14,7 @@ func TestFollowKeyFollowsAndUndoUnfollows(t *testing.T) {
 	if f.joined() != "follow" {
 		t.Fatalf("calls = %s, want follow", f.joined())
 	}
-	if got := m.a.st.Entries["did:a"].Decision; got != decFollowed {
+	if got := m.a.st.Entries["did:a"].Decision; got != store.Followed {
 		t.Errorf("decision = %q, want followed", got)
 	}
 	if m.idx != 1 {
@@ -39,11 +41,11 @@ func TestOverridingAFollowUnfollowsFirst(t *testing.T) {
 	m = press(m, "f")
 	m = press(m, "left")
 	m = press(m, "k") // keep means "no relationship": the follow is removed
-	if f.joined() != "follow,unfollow" || m.a.st.Entries["did:a"].Decision != decKept {
+	if f.joined() != "follow,unfollow" || m.a.st.Entries["did:a"].Decision != store.Kept {
 		t.Fatalf("calls=%s decision=%q", f.joined(), m.a.st.Entries["did:a"].Decision)
 	}
 	m = press(m, "u") // undoing the keep restores the follow
-	if f.joined() != "follow,unfollow,follow" || m.a.st.Entries["did:a"].Decision != decFollowed {
+	if f.joined() != "follow,unfollow,follow" || m.a.st.Entries["did:a"].Decision != store.Followed {
 		t.Errorf("after undo: calls=%s decision=%q", f.joined(), m.a.st.Entries["did:a"].Decision)
 	}
 	m = press(m, "u") // and undoing the original follow removes the *new* record
@@ -53,7 +55,7 @@ func TestOverridingAFollowUnfollowsFirst(t *testing.T) {
 	if _, ok := m.a.st.Entries["did:a"]; ok {
 		t.Error("everything undone: no decision should remain")
 	}
-	evs, _ := ReadAudit(m.a.audit.path)
+	evs, _ := store.ReadAudit(m.a.audit.Path())
 	var got []string
 	for _, e := range evs {
 		got = append(got, e.Action)
@@ -68,11 +70,11 @@ func TestFollowingABlockedAccountLiftsTheBlock(t *testing.T) {
 	m = press(m, "b")
 	m = press(m, "left")
 	m = press(m, "f")
-	if f.joined() != "block,unblock,follow" || m.a.st.Entries["did:a"].Decision != decFollowed {
+	if f.joined() != "block,unblock,follow" || m.a.st.Entries["did:a"].Decision != store.Followed {
 		t.Fatalf("calls=%s decision=%q", f.joined(), m.a.st.Entries["did:a"].Decision)
 	}
 	m = press(m, "u") // back to blocked
-	if f.joined() != "block,unblock,follow,unfollow,block" || m.a.st.Entries["did:a"].Decision != decBlocked {
+	if f.joined() != "block,unblock,follow,unfollow,block" || m.a.st.Entries["did:a"].Decision != store.Blocked {
 		t.Errorf("after undo: calls=%s decision=%q", f.joined(), m.a.st.Entries["did:a"].Decision)
 	}
 }
@@ -82,7 +84,7 @@ func TestBlockingAFollowedAccountUnfollowsIt(t *testing.T) {
 	m = press(m, "f")
 	m = press(m, "left")
 	m = press(m, "b")
-	if f.joined() != "follow,unfollow,block" || m.a.st.Entries["did:a"].Decision != decBlocked {
+	if f.joined() != "follow,unfollow,block" || m.a.st.Entries["did:a"].Decision != store.Blocked {
 		t.Errorf("calls=%s decision=%q", f.joined(), m.a.st.Entries["did:a"].Decision)
 	}
 }
@@ -107,13 +109,13 @@ func TestFollowFromTimeline(t *testing.T) {
 	}
 	m = press(m, "down")
 	m = press(m, "f") // rando: a stranger who reached you through a repost
-	if f.joined() != "follow" || m.a.st.Entries["did:rando"].Decision != decFollowed {
+	if f.joined() != "follow" || m.a.st.Entries["did:rando"].Decision != store.Followed {
 		t.Errorf("calls=%s entries=%v", f.joined(), m.a.st.Entries)
 	}
 	if m.cur != 1 {
 		t.Errorf("timeline cursor should stay put, cur=%d", m.cur)
 	}
-	evs, _ := ReadAudit(m.a.audit.path)
+	evs, _ := store.ReadAudit(m.a.audit.Path())
 	if len(evs) != 1 || evs[0].Action != "follow" || evs[0].Source != "tui:following" || evs[0].Via != "friend.bsky.social" {
 		t.Errorf("audit = %+v", evs)
 	}
@@ -136,7 +138,7 @@ func TestCLIFollowAndUnfollow(t *testing.T) {
 	if err := a.act(t.Context(), "follow", "newbie", false); err != nil {
 		t.Fatal(err)
 	}
-	if f.joined() != "follow" || a.st.Entries["did:newbie"].Decision != decFollowed {
+	if f.joined() != "follow" || a.st.Entries["did:newbie"].Decision != store.Followed {
 		t.Errorf("calls=%s entries=%v", f.joined(), a.st.Entries)
 	}
 	if err := a.act(t.Context(), "follow", "friend", false); err != nil { // already following
@@ -151,7 +153,7 @@ func TestCLIFollowAndUnfollow(t *testing.T) {
 	if f.joined() != "follow,unfollow" {
 		t.Errorf("calls = %s", f.joined())
 	}
-	evs, _ := ReadAudit(a.audit.path)
+	evs, _ := store.ReadAudit(a.audit.Path())
 	var got []string
 	for _, e := range evs {
 		got = append(got, e.Action)

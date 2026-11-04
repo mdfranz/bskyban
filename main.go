@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mdfranz/bskyban/internal/bsky"
+	"github.com/mdfranz/bskyban/internal/store"
 	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
@@ -72,18 +73,18 @@ func realMain() int {
 	statePath := os.Getenv("BSKYBAN_STATE")
 	if statePath == "" {
 		var err error
-		if statePath, err = defaultStatePath(); err != nil {
+		if statePath, err = store.DefaultStatePath(); err != nil {
 			return fail(err)
 		}
 	}
 	auditPath := os.Getenv("BSKYBAN_AUDIT")
 	if auditPath == "" {
 		var err error
-		if auditPath, err = defaultAuditPath(); err != nil {
+		if auditPath, err = store.DefaultAuditPath(); err != nil {
 			return fail(err)
 		}
 	}
-	st, err := LoadState(statePath)
+	st, err := store.LoadState(statePath)
 	if err != nil {
 		return fail(err)
 	}
@@ -92,7 +93,7 @@ func realMain() int {
 	if err := c.Login(ctx, handle, pw); err != nil {
 		return fail(fmt.Errorf("login: %w", err))
 	}
-	a := &app{c: c, st: st, audit: NewAudit(auditPath), stdin: os.Stdin, stdout: os.Stdout}
+	a := &app{c: c, st: st, audit: store.NewAudit(auditPath), stdin: os.Stdin, stdout: os.Stdout}
 
 	switch cmd {
 	case "feed":

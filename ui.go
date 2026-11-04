@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mdfranz/bskyban/internal/bsky"
+	"github.com/mdfranz/bskyban/internal/store"
 	"github.com/mdfranz/bskyban/internal/termtext"
 	"github.com/rivo/uniseg"
 )
@@ -89,8 +90,8 @@ type undoEntry struct {
 	idx      int
 	profile  bsky.Profile
 	decision string
-	record   string // block/follow record this decision created
-	prev     *Entry // decision recorded before this one
+	record   string       // block/follow record this decision created
+	prev     *store.Entry // decision recorded before this one
 }
 
 type model struct {
@@ -485,7 +486,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if manual {
 					detail = "manual refresh (R)"
 				}
-				m.audit(AuditEvent{Action: "refresh", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following",
+				m.audit(store.AuditEvent{Action: "refresh", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following",
 					Detail: detail, Error: msg.err.Error()})
 			}
 			if manual {
@@ -629,7 +630,7 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 }
 
 // audit appends to the audit log; a failure to log is shown, never swallowed.
-func (m *model) audit(ev AuditEvent) {
+func (m *model) audit(ev store.AuditEvent) {
 	if err := m.a.audit.Log(ev); err != nil && m.err == nil {
 		m.err = fmt.Errorf("audit log: %w", err)
 	}
@@ -656,17 +657,17 @@ func (m model) via(e undoEntry) string {
 	return ""
 }
 
-var decisionAction = map[string]string{decBlocked: "block", decFollowed: "follow", decKept: "keep", decSkipped: "skip"}
+var decisionAction = map[string]string{store.Blocked: "block", store.Followed: "follow", store.Kept: "keep", store.Skipped: "skip"}
 
 // liftAction names the audit event for deleting the record behind an overridden decision.
-var liftAction = map[string]string{decBlocked: "unblock", decFollowed: "unfollow"}
+var liftAction = map[string]string{store.Blocked: "unblock", store.Followed: "unfollow"}
 
 // auditEvent is the base event for msg, whether it succeeded or failed.
-func (m model) auditEvent(msg actMsg) AuditEvent {
+func (m model) auditEvent(msg actMsg) store.AuditEvent {
 	e := msg.undo
-	ev := AuditEvent{
+	ev := store.AuditEvent{
 		Action: decisionAction[e.decision], DID: e.profile.DID, Handle: e.profile.Handle,
-		Source: m.source(e.tab), Via: m.via(e), Snapshot: snapshotOf(e.profile, m.profiles[e.profile.DID] != nil),
+		Source: m.source(e.tab), Via: m.via(e), Snapshot: store.SnapshotOf(e.profile, m.profiles[e.profile.DID] != nil),
 		OK: msg.err == nil, Record: msg.newURI,
 	}
 	if e.prev != nil {
@@ -687,15 +688,15 @@ func (m model) auditEvent(msg actMsg) AuditEvent {
 
 // auditEvents lists what a successful action did. Overriding a block or follow
 // with another decision deletes that record, which gets its own unblock/unfollow event.
-func (m model) auditEvents(msg actMsg) []AuditEvent {
+func (m model) auditEvents(msg actMsg) []store.AuditEvent {
 	e := msg.undo
 	main := m.auditEvent(msg)
 	if !msg.isUndo && e.prev != nil && isRemote(e.prev.Decision) && e.prev.Decision != e.decision {
 		lift := main
 		lift.Action, lift.Detail, lift.Record = liftAction[e.prev.Decision], "lifted by "+e.decision, ""
-		return []AuditEvent{lift, main}
+		return []store.AuditEvent{lift, main}
 	}
-	return []AuditEvent{main}
+	return []store.AuditEvent{main}
 }
 
 func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -828,7 +829,7 @@ func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 // applyPosted logs a finished post and pulls it into the timeline.
 func (m model) applyPosted(msg postedMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
-	ev := AuditEvent{Action: "post", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following", OK: msg.err == nil, Record: msg.uri,
+	ev := store.AuditEvent{Action: "post", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following", OK: msg.err == nil, Record: msg.uri,
 		Detail: truncateWidth(strings.Join(strings.Fields(msg.text), " "), 200)}
 	if msg.reply != nil {
 		ev.Via = "reply to " + msg.reply.Parent.URI
@@ -875,7 +876,7 @@ func (m model) likeKey() (model, tea.Cmd) {
 func (m model) applyLiked(msg likedMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	it := msg.item
-	ev := AuditEvent{Action: "like", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following", OK: msg.err == nil,
+	ev := store.AuditEvent{Action: "like", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following", OK: msg.err == nil,
 		Record: msg.like, Detail: it.URI, Via: "@" + it.Author.Handle}
 	if msg.unlik {
 		ev.Action, ev.Record = "unlike", it.Like
@@ -970,7 +971,7 @@ func (m model) deleteKey(confirm string) (model, tea.Cmd) {
 func (m model) applyDeleted(msg deletedMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	it := msg.item
-	ev := AuditEvent{Action: "delete-post", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following", OK: msg.err == nil, Record: it.URI,
+	ev := store.AuditEvent{Action: "delete-post", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following", OK: msg.err == nil, Record: it.URI,
 		Detail: truncateWidth(strings.Join(strings.Fields(it.Post.Text), " "), 200)}
 	if msg.err != nil {
 		ev.Error = msg.err.Error()
@@ -1056,13 +1057,13 @@ func (m model) candKey(key string) (model, tea.Cmd) {
 	}
 	switch key {
 	case "b":
-		return m.decideKey(p, decBlocked)
+		return m.decideKey(p, store.Blocked)
 	case "k":
-		return m.decideKey(p, decKept)
+		return m.decideKey(p, store.Kept)
 	case "s":
-		return m.decideKey(p, decSkipped)
+		return m.decideKey(p, store.Skipped)
 	case "f":
-		return m.decideKey(p, decFollowed)
+		return m.decideKey(p, store.Followed)
 	}
 	return m, nil
 }
@@ -1118,10 +1119,10 @@ func (m model) browseKey(key, confirm string) (model, tea.Cmd) {
 			break
 		}
 		if key == "k" {
-			return m.decideKey(p, decKept)
+			return m.decideKey(p, store.Kept)
 		}
 		if key == "f" {
-			return m.decideKey(p, decFollowed)
+			return m.decideKey(p, store.Followed)
 		}
 		if p.DID == m.a.c.DID {
 			m.status = "that's you"
@@ -1132,7 +1133,7 @@ func (m model) browseKey(key, confirm string) (model, tea.Cmd) {
 			m.status = fmt.Sprintf("You follow @%s. Press b again to block them.", p.Handle)
 			break
 		}
-		return m.decideKey(p, decBlocked)
+		return m.decideKey(p, store.Blocked)
 	}
 	next, more := m.maybeLoadMore()
 	return next, tea.Batch(more, next.prefetch())
@@ -1153,7 +1154,7 @@ func (m model) decideKey(p bsky.Profile, decision string) (model, tea.Cmd) {
 		m.status = fmt.Sprintf("@%s is already %s", p.Handle, decision)
 		return m, nil
 	}
-	if decision == decFollowed && p.Viewer.Following != "" {
+	if decision == store.Followed && p.Viewer.Following != "" {
 		m.status = fmt.Sprintf("you already follow @%s", p.Handle)
 		return m, nil
 	}
@@ -1165,7 +1166,7 @@ func (m model) decideKey(p bsky.Profile, decision string) (model, tea.Cmd) {
 // only touched in applyAct.
 func (m model) decide(p bsky.Profile, decision string) (model, tea.Cmd) {
 	prev, had := m.a.st.Entries[p.DID]
-	var prevP *Entry
+	var prevP *store.Entry
 	if had {
 		prevP = &prev
 	}
@@ -1324,13 +1325,13 @@ func styleLines(lines []string, st lipgloss.Style) []string {
 // decisionBadge shows what was decided about did earlier, if anything.
 func (m model) decisionBadge(did string) string {
 	switch m.a.st.Entries[did].Decision {
-	case decBlocked:
+	case store.Blocked:
 		return errStyle.Render("● blocked")
-	case decFollowed:
+	case store.Followed:
 		return okStyle.Render("● followed")
-	case decKept:
+	case store.Kept:
 		return okStyle.Render("● kept")
-	case decSkipped:
+	case store.Skipped:
 		return dimStyle.Render("● skipped")
 	}
 	return ""
@@ -1885,11 +1886,11 @@ func (m model) itemLines(i, w int) []string {
 		add("new", fresh)
 	}
 	switch m.a.st.Entries[it.Author.DID].Decision {
-	case decBlocked:
+	case store.Blocked:
 		add("blocked", errStyle)
-	case decFollowed:
+	case store.Followed:
 		add("followed", okStyle)
-	case decKept:
+	case store.Kept:
 		add("kept", okStyle)
 	}
 	tailPlain, tail := strings.Join(tagsPlain, " "), strings.Join(tags, " ")

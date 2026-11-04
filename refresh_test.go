@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mdfranz/bskyban/internal/bsky"
+	"github.com/mdfranz/bskyban/internal/store"
 )
 
 func post(uri, handle, by string) bsky.FeedItem {
@@ -215,8 +216,8 @@ func TestFailedChecks(t *testing.T) {
 		t.Error("header should show that refreshing failed")
 	}
 	m = check(t, m, false) // same failure again on the next tick
-	logged := func() []AuditEvent {
-		evs, err := ReadAudit(m.a.audit.path)
+	logged := func() []store.AuditEvent {
+		evs, err := store.ReadAudit(m.a.audit.Path())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -257,7 +258,7 @@ func TestNewRepostAuthorsJoinTheQueue(t *testing.T) {
 	m := refreshModel(t, s, A)
 	m.list = []bsky.Profile{existing}
 	m.ctxs["did:old"] = repostCtx{By: []string{"alice.bsky.social"}}
-	m.a.st.Entries["did:decided"] = Entry{Decision: decKept}
+	m.a.st.Entries["did:decided"] = store.Entry{Decision: store.Kept}
 	m = check(t, m, false)
 
 	var got []string

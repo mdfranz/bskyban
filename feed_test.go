@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mdfranz/bskyban/internal/bsky"
+	"github.com/mdfranz/bskyban/internal/store"
 )
 
 func entry(author, authorHandle, by, following, blocking string) string {
@@ -38,7 +39,11 @@ func TestFeedCandidates(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	st := &State{path: t.TempDir() + "/state.json", Entries: map[string]Entry{"did:decided": {Decision: decKept}}}
+	st, err := store.LoadState(t.TempDir() + "/state.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Entries["did:decided"] = store.Entry{Decision: store.Kept}
 	a := &app{c: bsky.NewClient(srv.URL), st: st}
 	a.c.DID = "did:me"
 

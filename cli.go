@@ -15,6 +15,7 @@ import (
 
 	"github.com/charmbracelet/x/term"
 	"github.com/mdfranz/bskyban/internal/bsky"
+	"github.com/mdfranz/bskyban/internal/store"
 	"github.com/mdfranz/bskyban/internal/termtext"
 	"github.com/rivo/uniseg"
 )
@@ -56,8 +57,8 @@ Environment:
 
 type app struct {
 	c      *bsky.Client
-	st     *State
-	audit  *Audit
+	st     *store.State
+	audit  *store.Audit
 	stdin  io.Reader
 	stdout io.Writer
 }
@@ -89,7 +90,7 @@ func (a *app) isNew(p bsky.Profile, backlog bool) bool {
 		return false
 	}
 	e, done := a.st.Entries[p.DID]
-	return !done || (backlog && e.Decision == decSkipped)
+	return !done || (backlog && e.Decision == store.Skipped)
 }
 
 // repostCtx records how a candidate reached your timeline.
@@ -234,12 +235,12 @@ func (a *app) cmdBaseline(ctx context.Context) error {
 	}
 	now := time.Now().UTC()
 	for _, f := range list {
-		a.st.Entries[f.DID] = Entry{Handle: f.Handle, Decision: decSkipped, At: now}
+		a.st.Entries[f.DID] = store.Entry{Handle: f.Handle, Decision: store.Skipped, At: now}
 	}
 	if err := a.st.Save(); err != nil {
 		return err
 	}
-	a.record(AuditEvent{Action: "baseline", OK: true, Detail: fmt.Sprintf("%d followers marked as old", len(list))})
+	a.record(store.AuditEvent{Action: "baseline", OK: true, Detail: fmt.Sprintf("%d followers marked as old", len(list))})
 	fmt.Fprintf(a.stdout, "baselined %d existing followers; only new ones will show by default (--backlog to revisit)\n", len(list))
 	return nil
 }
@@ -361,7 +362,7 @@ func (a *app) cmdPost(ctx context.Context, args []string) (err error) {
 	if n := uniseg.GraphemeClusterCount(text); n > bsky.MaxPostGraphemes {
 		return fmt.Errorf("post is %d characters; the limit is %d", n, bsky.MaxPostGraphemes)
 	}
-	ev := AuditEvent{Action: "post", DID: a.c.DID, Handle: a.c.Handle, DryRun: *dry, Detail: truncateWidth(strings.Join(strings.Fields(text), " "), 200)}
+	ev := store.AuditEvent{Action: "post", DID: a.c.DID, Handle: a.c.Handle, DryRun: *dry, Detail: truncateWidth(strings.Join(strings.Fields(text), " "), 200)}
 	defer func() {
 		ev.OK = err == nil
 		if err != nil {
@@ -407,7 +408,7 @@ func (a *app) cmdDeletePost(ctx context.Context, args []string) error {
 }
 
 func (a *app) deletePost(ctx context.Context, ref string, dry bool) (err error) {
-	ev := AuditEvent{Action: "delete-post", DID: a.c.DID, Handle: a.c.Handle, DryRun: dry, Detail: truncateWidth(termtext.Sanitize(ref), 200)}
+	ev := store.AuditEvent{Action: "delete-post", DID: a.c.DID, Handle: a.c.Handle, DryRun: dry, Detail: truncateWidth(termtext.Sanitize(ref), 200)}
 	defer func() {
 		ev.OK = err == nil
 		if err != nil {
@@ -500,7 +501,7 @@ func (a *app) cmdLike(ctx context.Context, cmd string, args []string) error {
 }
 
 func (a *app) likePost(ctx context.Context, cmd, ref string, dry bool) (err error) {
-	ev := AuditEvent{Action: cmd, DID: a.c.DID, Handle: a.c.Handle, DryRun: dry, Detail: truncateWidth(termtext.Sanitize(ref), 200)}
+	ev := store.AuditEvent{Action: cmd, DID: a.c.DID, Handle: a.c.Handle, DryRun: dry, Detail: truncateWidth(termtext.Sanitize(ref), 200)}
 	defer func() {
 		ev.OK = err == nil
 		if err != nil {
@@ -555,11 +556,11 @@ func postURL(uri string) string {
 func (a *app) act(ctx context.Context, cmd, id string, dry bool) (err error) {
 	p, perr := a.c.GetProfile(ctx, id)
 	if perr != nil {
-		a.record(AuditEvent{Action: cmd, Handle: id, DryRun: dry, Error: perr.Error()})
+		a.record(store.AuditEvent{Action: cmd, Handle: id, DryRun: dry, Error: perr.Error()})
 		return perr
 	}
 	prev := a.st.Entries[p.DID].Decision
-	ev := AuditEvent{Action: cmd, DID: p.DID, Handle: p.Handle, DryRun: dry, Prev: prev, Snapshot: snapshotOf(*p, true)}
+	ev := store.AuditEvent{Action: cmd, DID: p.DID, Handle: p.Handle, DryRun: dry, Prev: prev, Snapshot: store.SnapshotOf(*p, true)}
 	defer func() {
 		ev.OK = err == nil
 		if err != nil {
@@ -579,7 +580,7 @@ func (a *app) act(ctx context.Context, cmd, id string, dry bool) (err error) {
 			if dry {
 				return nil
 			}
-			return a.st.Set(p.DID, p.Handle, decBlocked)
+			return a.st.Set(p.DID, p.Handle, store.Blocked)
 		}
 		fmt.Fprintf(a.stdout, "%sblock @%s (%s)\n", prefix, p.Handle, p.DID)
 		if dry {
@@ -590,13 +591,13 @@ func (a *app) act(ctx context.Context, cmd, id string, dry bool) (err error) {
 			return err
 		}
 		ev.Record = uri
-		return a.st.Set(p.DID, p.Handle, decBlocked)
+		return a.st.Set(p.DID, p.Handle, store.Blocked)
 	case "keep":
 		fmt.Fprintf(a.stdout, "%skeep @%s\n", prefix, p.Handle)
 		if dry {
 			return nil
 		}
-		return a.st.Set(p.DID, p.Handle, decKept)
+		return a.st.Set(p.DID, p.Handle, store.Kept)
 	case "follow":
 		if p.Viewer.Following != "" {
 			fmt.Fprintf(a.stdout, "%s@%s: you already follow them\n", strings.Replace(prefix, "would ", "", 1), p.Handle)
@@ -612,7 +613,7 @@ func (a *app) act(ctx context.Context, cmd, id string, dry bool) (err error) {
 			return err
 		}
 		ev.Record = uri
-		return a.st.Set(p.DID, p.Handle, decFollowed)
+		return a.st.Set(p.DID, p.Handle, store.Followed)
 	case "unfollow":
 		fmt.Fprintf(a.stdout, "%sunfollow @%s (%s)\n", prefix, p.Handle, p.DID)
 		ev.Record = p.Viewer.Following
@@ -626,7 +627,7 @@ func (a *app) act(ctx context.Context, cmd, id string, dry bool) (err error) {
 		if err := a.c.Unfollow(ctx, p.Viewer.Following); err != nil {
 			return err
 		}
-		if a.st.Entries[p.DID].Decision == decFollowed {
+		if a.st.Entries[p.DID].Decision == store.Followed {
 			return a.st.Delete(p.DID)
 		}
 		return nil
@@ -647,7 +648,7 @@ func (a *app) act(ctx context.Context, cmd, id string, dry bool) (err error) {
 }
 
 // record writes an audit event; a failing log is reported but never hides the action's result.
-func (a *app) record(e AuditEvent) {
+func (a *app) record(e store.AuditEvent) {
 	if e.Source == "" {
 		e.Source = "cli"
 	}

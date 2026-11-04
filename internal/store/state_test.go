@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"testing"
@@ -6,7 +6,7 @@ import (
 )
 
 func TestFailedStateMutationPreservesPreviousEntry(t *testing.T) {
-	old := Entry{Handle: "old", Decision: decKept, At: time.Now().UTC()}
+	old := Entry{Handle: "old", Decision: Kept, At: time.Now().UTC()}
 	for _, had := range []bool{false, true} {
 		for _, op := range []string{"set", "put", "delete"} {
 			s := &State{path: t.TempDir(), Entries: map[string]Entry{}}
@@ -16,9 +16,9 @@ func TestFailedStateMutationPreservesPreviousEntry(t *testing.T) {
 			var err error
 			switch op {
 			case "set":
-				err = s.Set("did:a", "new", decBlocked)
+				err = s.Set("did:a", "new", Blocked)
 			case "put":
-				err = s.Put("did:a", Entry{Decision: decSkipped})
+				err = s.Put("did:a", Entry{Decision: Skipped})
 			case "delete":
 				err = s.Delete("did:a")
 			}
