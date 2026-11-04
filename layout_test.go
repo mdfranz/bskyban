@@ -131,7 +131,8 @@ func TestPostViewShowsEngagementAndLink(t *testing.T) {
 }
 
 func TestLinkCards(t *testing.T) {
-	raw := json.RawMessage(`{"$type":"app.bsky.embed.external#view","external":{"uri":"https://www.theatlantic.com/politics/archive/2026/11/x/1","title":"The Limits of  Trump's Trickery"}}`)
+	uri := "https://www.theatlantic.com/politics/archive/2026/11/x/1"
+	raw := json.RawMessage(`{"$type":"app.bsky.embed.external#view","external":{"uri":"` + uri + `","title":"The Limits of  Trump's Trickery"}}`)
 	c := embedLink(raw)
 	if c == nil || c.Title != "The Limits of Trump's Trickery" {
 		t.Fatalf("card = %+v", c)
@@ -139,35 +140,29 @@ func TestLinkCards(t *testing.T) {
 	if got := describeEmbed(raw); len(got) != 0 {
 		t.Errorf("a link card is no longer an attachment string: %v", got)
 	}
-	if got := c.label("read this"); got != "↗ The Limits of Trump's Trickery · theatlantic.com" {
-		t.Errorf("label = %q", got)
+	// the URL is always shown in full (terminals detect plain URLs), never twice
+	for text, want := range map[string]string{
+		"read this":                             "↗ The Limits of Trump's Trickery " + uri,
+		"see " + uri:                            "↗ The Limits of Trump's Trickery",
+		"the limits of trump's trickery":        "↗ " + uri,
+		"the limits of trump's trickery " + uri: "",
+	} {
+		if got := c.label(text); got != want {
+			t.Errorf("label(%q) = %q, want %q", text, got, want)
+		}
 	}
-	if got := c.label("the limits of trump's trickery"); got != "↗ theatlantic.com" {
-		t.Errorf("a title the text already says is not repeated: %q", got)
-	}
-	if got := preview(Post{Text: "chills our rights. " + c.URI, Link: c}); got != "chills our rights. ↗ The Limits of Trump's Trickery · theatlantic.com" {
-		t.Errorf("the card's own URL is dropped from the list text: %q", got)
-	}
-	if got := (linkCard{URI: "https://bit.ly/3V270SA"}).label(""); got != "↗ bit.ly/3V270SA" {
+	if got := (linkCard{URI: "https://bit.ly/3V270SA"}).label(""); got != "↗ https://bit.ly/3V270SA" {
 		t.Errorf("untitled card = %q", got)
 	}
 
 	long := "https://www.washingtonpost.com/technology/2026/11/03/google-deepmind-staff-protest-lifetime-ban/"
-	if got := shortenURLs("read " + long + "."); got != "read washingtonpost.com/technology/2026/11/0…." {
-		t.Errorf("shortenURLs = %q", got)
-	}
-
-	// list: one short line; post view: the title links to the page
 	p := Post{Text: "A big night " + long, Link: &linkCard{URI: "https://bit.ly/3V270SA", Title: "The Limits of Trump's Midterm Trickery"}}
-	if got := preview(p); got != "A big night washingtonpost.com/technology/2026/11/0… ↗ The Limits of Trump's Midterm Trickery · bit.ly" {
-		t.Errorf("preview = %q", got)
+	if got := preview(p); got != "A big night "+long+" ↗ The Limits of Trump's Midterm Trickery https://bit.ly/3V270SA" {
+		t.Errorf("preview should keep URLs whole: %q", got)
 	}
-	full := strings.Join(renderPost(p, 100, true), "\n")
-	if !strings.Contains(full, "\x1b]8;;https://bit.ly/3V270SA\x1b\\") || strings.Contains(full, "[link]") {
-		t.Errorf("post view should link the card title to its URL:\n%q", full)
-	}
-	if plain := ansiRe.ReplaceAllString(oscRe.ReplaceAllString(full, ""), ""); !strings.Contains(plain, "↗ The Limits of Trump's Midterm Trickery · bit.ly") {
-		t.Errorf("post view card:\n%s", plain)
+	full := strings.Join(renderPost(p, 200, true), "\n")
+	if plain := ansiRe.ReplaceAllString(oscRe.ReplaceAllString(full, ""), ""); !strings.Contains(plain, "↗ The Limits of Trump's Midterm Trickery https://bit.ly/3V270SA") || strings.Contains(plain, "[link]") {
+		t.Errorf("post view card should show its URL:\n%s", plain)
 	}
 }
 

@@ -1718,22 +1718,18 @@ const previewLines = 3
 // preview is the text shown for a post in the list: its text, then any
 // attachments and quoted post, so image-only posts still say something.
 // preview is the post's own text, attachments and link card as one paragraph (no
-// stray line breaks), with long URLs shortened. A quoted post is left out;
-// itemLines shows it on lines of its own.
+// stray line breaks). URLs stay whole so the terminal can detect and open them.
+// A quoted post is left out; itemLines shows it on lines of its own.
 func preview(p Post) string {
-	text := p.Text
-	if p.Link != nil { // the card says where it goes; no need for the URL in the text too
-		text = strings.Replace(text, p.Link.URI, "", 1)
-	}
-	parts := append([]string{shortenURLs(text)}, p.Attach...)
+	parts := append([]string{p.Text}, p.Attach...)
 	if p.Link != nil {
 		parts = append(parts, p.Link.label(p.Text))
 	}
 	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
 }
 
-// cardTitle is what the card should call the page: its title, unless the post's
-// text already says it (then just where it goes).
+// cardTitle is the page title to show, unless it is missing or the post's text
+// already says it.
 func (c linkCard) cardTitle(text string) string {
 	if c.Title == "" || strings.Contains(strings.ToLower(text), strings.ToLower(c.Title)) {
 		return ""
@@ -1741,21 +1737,20 @@ func (c linkCard) cardTitle(text string) string {
 	return c.Title
 }
 
-// label is the card in one line: "↗ Title · site"; just "↗ site" when the post's
-// text already gives the title, and the short URL when the page has no title.
+// label is the card in one line: "↗ Title https://…". The URL is left out when the
+// post's text already has it, and the title when the text already says it.
 func (c linkCard) label(text string) string {
-	return "↗ " + c.name(text)
-}
-
-// name is the card's text without the arrow (see label).
-func (c linkCard) name(text string) string {
-	switch t := c.cardTitle(text); {
-	case t != "":
-		return t + " · " + urlHost(c.URI)
-	case c.Title != "":
-		return urlHost(c.URI)
+	parts := []string{"↗"}
+	if t := c.cardTitle(text); t != "" {
+		parts = append(parts, t)
 	}
-	return shortURL(c.URI)
+	if !strings.Contains(text, c.URI) {
+		parts = append(parts, c.URI)
+	}
+	if len(parts) == 1 { // the text has both: nothing left to add
+		return ""
+	}
+	return strings.Join(parts, " ")
 }
 
 // quoteLines is how many lines of a quoted post the list shows.
@@ -1954,19 +1949,9 @@ func renderPost(p Post, w int, full bool) []string {
 	for _, a := range p.Attach {
 		body(a, &dimStyle, "")
 	}
-	if c := p.Link; c != nil { // the title links to the page; the site says where it goes
-		title := c.cardTitle(p.Text)
-		named := title != ""
-		if !named {
-			title = c.name(p.Text)
-		}
-		tl := wrapText("↗ "+title, w-len(indent)-len(urlHost(c.URI))-3)
-		for i, l := range tl {
-			l = accentStyle.Render(osc8(c.URI, oscRe.ReplaceAllString(l, "")))
-			if i == len(tl)-1 && named {
-				l += dimStyle.Render(" · " + urlHost(c.URI))
-			}
-			lines = append(lines, indent+l)
+	if p.Link != nil {
+		if l := p.Link.label(p.Text); l != "" {
+			body(l, &dimStyle, "")
 		}
 	}
 	if p.Quote != "" {

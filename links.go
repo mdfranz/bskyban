@@ -69,36 +69,6 @@ func linkifyIfTTY(s string) string {
 // httpRe matches http(s) URLs in plain text.
 var httpRe = regexp.MustCompile(`https?://[^\s\x1b]+`)
 
-// urlHost is the URL's host without "www.", or the URL itself if it has none.
-func urlHost(u string) string {
-	h := u
-	if i := strings.Index(h, "://"); i >= 0 {
-		h = h[i+3:]
-	}
-	if i := strings.IndexAny(h, "/?#"); i >= 0 {
-		h = h[:i]
-	}
-	return strings.TrimPrefix(h, "www.")
-}
-
-// shortURL is a URL for reading, not following: no scheme or "www.", and the path
-// cut to keep it under about 40 columns.
-func shortURL(u string) string {
-	s := strings.TrimPrefix(u[strings.Index(u, "://")+3:], "www.")
-	if r := []rune(s); len(r) > 40 {
-		return string(r[:39]) + "…"
-	}
-	return s
-}
-
-// shortenURLs replaces every http(s) URL in text with its shortURL form.
-func shortenURLs(text string) string {
-	return httpRe.ReplaceAllStringFunc(text, func(m string) string {
-		url := strings.TrimRight(m, urlTrailing)
-		return shortURL(url) + m[len(url):]
-	})
-}
-
 func osc8(target, text string) string {
 	return "\x1b]8;;" + target + "\x1b\\" + text + "\x1b]8;;\x1b\\"
 }

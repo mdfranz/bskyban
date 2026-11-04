@@ -104,8 +104,8 @@ bskyban feed --list [--json] # print the Reposts candidates instead
 lines, with a quoted post on up to two lines of its own (`▎`). A repost is aged by when it
 was reposted (`↻ reposted by @who · written 8m ago` gives the post's own age), and a reply
 names who it answers (`↳ replying to @who`). Each post's age (`4m`) is a clickable link to it on bsky.app. Link previews show as
-`↗ Title · site` (the title is a clickable link in the post view), and long URLs in the
-list are shortened. Replies right below a post in
+`↗ Title https://…`, leaving out whatever the post's text already says; URLs are
+always shown in full so your terminal can open them. Replies right below a post in
 the same thread are indented beneath it; open one to see it in full (with its like, repost, reply and quote counts and an
 `open post ↗` link to bsky.app) next to its author's profile, including
 the parent of a reply, quoted posts, image links and recent posts by the author.
