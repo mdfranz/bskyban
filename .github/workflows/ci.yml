@@ -83,8 +83,9 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
-          cache: true
+          # Latest stable, not the go.mod minimum: that exact patch release has known
+          # standard-library vulnerabilities, which are fixed by whoever builds with newer Go.
+          go-version: stable
 
       - name: Scan dependencies and standard library
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
