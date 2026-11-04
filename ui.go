@@ -1786,6 +1786,16 @@ func (m model) inThread(i int) bool {
 	return it.Post.Reply && it.By == "" && it.Parent.URI != "" && it.Parent.URI == m.items[i-1].URI
 }
 
+// ageLink is the row's age, padded to 5 columns, as a clickable link to the post
+// on bsky.app (in terminals that support OSC 8 hyperlinks).
+func ageLink(it FeedItem, age string) string {
+	pad := strings.Repeat(" ", max(5-lipgloss.Width(age), 0))
+	if it.URI == "" {
+		return age + pad
+	}
+	return osc8(postLink(it), age) + pad
+}
+
 // ageOf is how long ago s (RFC 3339) was, or "?".
 func ageOf(s string) string {
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
@@ -1867,7 +1877,7 @@ func (m model) itemLines(i, w int) []string {
 
 	var lines []string
 	if i == m.cur {
-		lines = append(lines, selStyle.Width(w).Render(strings.TrimRight(fmt.Sprintf("▸ %s%-5s %s %s", gutter, age, who, tailPlain), " ")))
+		lines = append(lines, selStyle.Width(w).Render(strings.TrimRight(fmt.Sprintf("▸ %s%s %s %s", gutter, ageLink(it, age), who, tailPlain), " ")))
 		for _, l := range text {
 			lines = append(lines, selStyle.Width(w).Render("  "+gutter+indent+l))
 		}
@@ -1880,7 +1890,7 @@ func (m model) itemLines(i, w int) []string {
 			lead = fresh.Render("┃") + " "
 		}
 		lead += gutter
-		header := fmt.Sprintf("%s%s %s", lead, dimStyle.Render(fmt.Sprintf("%-5s", age)), titleStyle.Render(who))
+		header := fmt.Sprintf("%s%s %s", lead, dimStyle.Render(ageLink(it, age)), titleStyle.Render(who))
 		if tail != "" {
 			header += " " + tail
 		}

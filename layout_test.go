@@ -31,7 +31,7 @@ func TestRepliesInTheSameThreadAreJoined(t *testing.T) {
 	plain := func(i int) []string {
 		var out []string
 		for _, l := range m.itemLines(i, m.listWidth()) {
-			out = append(out, ansiRe.ReplaceAllString(l, ""))
+			out = append(out, oscRe.ReplaceAllString(ansiRe.ReplaceAllString(l, ""), ""))
 		}
 		return out
 	}
@@ -61,7 +61,7 @@ func TestRepostShowsWhenItWasReposted(t *testing.T) {
 		RepostedAt: now.Add(-time.Minute).Format(time.RFC3339),
 		Post:       Post{Text: "poem", CreatedAt: now.Add(-8 * time.Minute).Format(time.RFC3339)}}}
 	m.cur = 1 // not selected, so the plain row is checked
-	h := ansiRe.ReplaceAllString(m.itemLines(0, m.listWidth())[0], "")
+	h := oscRe.ReplaceAllString(ansiRe.ReplaceAllString(m.itemLines(0, m.listWidth())[0], ""), "")
 	if !strings.HasPrefix(strings.TrimSpace(h), "1m") || !strings.Contains(h, "↻ reposted by @egg.bsky.social · written 8m ago") {
 		t.Errorf("row should be aged by the repost and say when it was posted: %q", h)
 	}
@@ -230,5 +230,27 @@ func TestReplyNamesWhoItAnswers(t *testing.T) {
 	}
 	if h := ansiRe.ReplaceAllString(m.itemLines(1, m.listWidth())[0], ""); !strings.HasSuffix(h, " reply") {
 		t.Errorf("without a known parent it still says reply: %q", h)
+	}
+}
+
+func TestListAgeLinksToThePost(t *testing.T) {
+	m, _ := followingModel(t)
+	m.items = []FeedItem{
+		{URI: "at://did:a/app.bsky.feed.post/3k", Author: Profile{DID: "did:a", Handle: "a.bsky.social"}, Post: Post{Text: "hi"}},
+		{Author: Profile{DID: "did:b", Handle: "b.bsky.social"}, Post: Post{Text: "no uri"}},
+	}
+	link := "\x1b]8;;https://bsky.app/profile/a.bsky.social/post/3k\x1b\\"
+	for _, cur := range []int{0, 1} { // as the selected row and as a plain row
+		m.cur = cur
+		h := m.itemLines(0, m.listWidth())[0]
+		if !strings.Contains(h, link) {
+			t.Errorf("cur=%d: the age should link to the post: %q", cur, h)
+		}
+		if w := lipgloss.Width(h); cur == 0 && w != m.listWidth() {
+			t.Errorf("the link must not change the selected row's width: %d, want %d", w, m.listWidth())
+		}
+	}
+	if h := m.itemLines(1, m.listWidth())[0]; strings.Contains(h, "\x1b]8;;") {
+		t.Errorf("no link without a post URI: %q", h)
 	}
 }
