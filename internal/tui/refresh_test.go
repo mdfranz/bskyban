@@ -276,8 +276,8 @@ func TestNewRepostAuthorsJoinTheQueue(t *testing.T) {
 	if m.ctxs["did:newguy"].Post.Text == "" {
 		t.Error("new candidate should carry the reposted post")
 	}
-	if !strings.Contains(m.tabBar(), "Reposts (2)") {
-		t.Errorf("tab count should grow: %q", m.tabBar())
+	if !strings.Contains(m.tabBar(nil), "Reposts (2)") {
+		t.Errorf("tab count should grow: %q", m.tabBar(nil))
 	}
 	if m.idx != 0 {
 		t.Error("the account under review must not move")

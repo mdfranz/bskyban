@@ -144,6 +144,8 @@ type model struct {
 	quitting bool    // wait for the active action to be saved and audited
 	pending  *actMsg // remote action completed, local save needs retrying
 	spin     spinner.Model
+	spinOn   bool                // a spinner tick is scheduled
+	clips    map[clipKey]clipped // wrapped list text, by item and width
 	profiles map[string]*bsky.Profile
 	posts    map[string]*[]bsky.Post // nil value = in flight
 	records  map[string]string       // block/follow records behind current decisions (this session)
@@ -170,7 +172,8 @@ func newModel(a *app.App, title string, load loadFunc) model {
 		label = "New followers"
 	}
 	return model{
-		a: a, title: title, candLabel: label, loader: load, loading: true, spin: sp,
+		a: a, title: title, candLabel: label, loader: load, loading: true, spin: sp, spinOn: true, // Init ticks
+		clips:    map[clipKey]clipped{},
 		tabs:     []tabID{tabCandidates},
 		profiles: map[string]*bsky.Profile{}, posts: map[string]*[]bsky.Post{}, records: map[string]string{},
 		fresh: map[string]time.Time{}, now: time.Now,
@@ -450,12 +453,43 @@ func (m model) prefetch() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+// Update handles msg, then starts the spinner if something it shows began loading.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if nm, ok := next.(model); ok && !nm.spinOn && nm.needsSpin() {
+		nm.spinOn = true
+		return nm, tea.Batch(cmd, nm.spin.Tick)
+	}
+	return next, cmd
+}
+
+// needsSpin reports whether the screen shows a spinner. It only ticks (and so
+// redraws the screen) while something is loading.
+func (m model) needsSpin() bool {
+	if m.loading || m.followLoading || m.busy {
+		return true
+	}
+	if m.active() == tabCandidates || m.inPost {
+		if p, ok := m.subject(); ok {
+			return m.profiles[p.DID] == nil || m.posts[p.DID] == nil
+		}
+	}
+	return false
+}
+
+func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		if msg.Width != m.width {
+			clear(m.clips) // wrapped for the old width
+		}
 		m.width, m.height = msg.Width, msg.Height
 		m = m.ensureVisible()
 	case spinner.TickMsg:
+		if !m.needsSpin() {
+			m.spinOn = false // nothing is loading: let the tick chain end
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
@@ -1380,19 +1414,18 @@ func (m model) ensureVisible() model {
 		return m
 	}
 	m.cur = min(max(m.cur, 0), len(m.items)-1)
-	m.listTop = min(m.listTop, m.cur)
-	w := m.listWidth()
-	for m.listTop < m.cur {
-		h := 0
-		for i := m.listTop; i <= m.cur; i++ {
-			h += len(m.itemLines(i, w))
-		}
-		if h <= m.avail() {
+	m.listTop = max(min(m.listTop, m.cur), 0)
+	// Walk up from the selection to the highest item that still fits with it on
+	// screen; that only renders one screenful, however far the selection jumped.
+	w, room, h := m.listWidth(), m.avail(), 0
+	low := m.cur
+	for i := m.cur; i >= m.listTop; i-- {
+		if h += len(m.itemLines(i, w)); h > room {
 			break
 		}
-		m.listTop++
+		low = i
 	}
-	m.listTop = max(m.listTop, 0)
+	m.listTop = low
 	return m
 }
 
@@ -1585,10 +1618,11 @@ func joinColumns(left, right []string, leftW int) string {
 	return b.String()
 }
 
-func (m model) panelsView(pos string) string {
+// panelsView puts the profile beside (or above) rl, the lines from rightLines.
+func (m model) panelsView(pos string, rl []string) string {
 	lw, _, stacked := m.panelWidths()
 	left := m.profilePanel(lw, pos)
-	right := window(m.rightLines(), m.scroll, m.rightAvail())
+	right := window(rl, m.scroll, m.rightAvail())
 	if stacked {
 		return strings.Join(append(append(left, ""), right...), "\n") + "\n"
 	}
@@ -1596,21 +1630,22 @@ func (m model) panelsView(pos string) string {
 }
 
 // scrollPos is the posts-panel scroll position as "[34%]", or "" if everything fits.
-func (m model) scrollPos() string {
-	n, av := len(m.rightLines()), m.rightAvail()
+func (m model) scrollPos(rl []string) string {
+	n, av := len(rl), m.rightAvail()
 	if n <= av {
 		return ""
 	}
 	return dimStyle.Render(fmt.Sprintf("   [%d%%]", (min(m.scroll, n-av)*100)/max(n-av, 1)))
 }
 
-func (m model) tabBar() string {
+// tabBar is the title row; rl (the right panel's lines) gives the scroll position.
+func (m model) tabBar(rl []string) string {
 	if len(m.tabs) == 1 {
 		title := titleStyle.Render("bskyban " + m.title)
 		if n := len(m.newPosts); n > 0 {
 			title += fmt.Sprintf(" (+%d new)", n)
 		}
-		return title + m.scrollPos()
+		return title + m.scrollPos(rl)
 	}
 	parts := []string{titleStyle.Render("bskyban")}
 	for i, t := range m.tabs {
@@ -1633,7 +1668,7 @@ func (m model) tabBar() string {
 	if m.refreshErr != nil {
 		flag = warnStyle.Render("   ⚠ refresh failed")
 	}
-	return strings.Join(parts, "   ") + flag + m.scrollPos()
+	return strings.Join(parts, "   ") + flag + m.scrollPos(rl)
 }
 
 // hintItems are the key hints for the current screen.
@@ -1720,11 +1755,15 @@ func (m model) hint() string { return strings.Join(m.hintLines(), "\n") }
 // the content above is padded (or, if it is ever too tall, cut) to fit the window.
 func (m model) View() string {
 	var b strings.Builder
-	b.WriteString(m.tabBar() + "\n\n")
+	var rl []string // built once: the tab bar's scroll position and the panels both use it
+	if !m.composing && m.follows == nil {
+		rl = m.rightLines()
+	}
+	b.WriteString(m.tabBar(rl) + "\n\n")
 	if m.composing {
 		b.WriteString(m.composeView())
 	} else {
-		b.WriteString(m.content())
+		b.WriteString(m.content(rl))
 	}
 
 	var bottom []string
@@ -1760,8 +1799,8 @@ func (m model) View() string {
 	return strings.Join(append(append(top, ""), bottom...), "\n")
 }
 
-// content is the active tab's main area.
-func (m model) content() string {
+// content is the active tab's main area; rl is the right panel from rightLines.
+func (m model) content(rl []string) string {
 	if m.follows != nil {
 		return m.followsView()
 	}
@@ -1774,7 +1813,7 @@ func (m model) content() string {
 		case m.idx >= len(m.list):
 			b.WriteString(okStyle.Render("All caught up — nothing new.") + " (← to go back)\n")
 		default:
-			b.WriteString(m.panelsView(fmt.Sprintf("%d of %d", m.idx+1, len(m.list))))
+			b.WriteString(m.panelsView(fmt.Sprintf("%d of %d", m.idx+1, len(m.list)), rl))
 		}
 	default:
 		switch {
@@ -1783,7 +1822,7 @@ func (m model) content() string {
 		case len(m.items) == 0:
 			b.WriteString(dimStyle.Render("Your timeline is empty.") + "\n")
 		case m.inPost:
-			b.WriteString(m.panelsView(fmt.Sprintf("%d of %d", m.cur+1, len(m.items))))
+			b.WriteString(m.panelsView(fmt.Sprintf("%d of %d", m.cur+1, len(m.items)), rl))
 		default:
 			b.WriteString(m.listView())
 		}
@@ -1841,6 +1880,29 @@ func clip(text string, w, n int) []string {
 		lines[n-1] = termtext.TruncateWidth(lines[n-1]+" …", w)
 	}
 	return lines
+}
+
+type (
+	clipKey struct {
+		key string // FeedItem.Key()
+		w   int
+	}
+	clipped struct{ text, quote []string }
+)
+
+// bodyLines is the item's clipped text and quoted post at width bw. Wrapping is
+// most of the cost of a frame and a post's text never changes once fetched, so
+// each item is wrapped once per width (the cache is cleared when the width changes).
+func (m model) bodyLines(it bsky.FeedItem, bw int) (text, quote []string) {
+	k := clipKey{it.Key(), bw}
+	if c, ok := m.clips[k]; ok {
+		return c.text, c.quote
+	}
+	c := clipped{clip(it.Post.Preview(), bw, previewLines), clip(strings.Join(strings.Fields(it.Post.Quote), " "), bw-2, quoteLines)}
+	if m.clips != nil && it.URI != "" { // without a URI, items cannot be told apart
+		m.clips[k] = c
+	}
+	return c.text, c.quote
 }
 
 // inThread reports whether item i answers the post right above it, so the list
@@ -1941,8 +2003,7 @@ func (m model) itemLines(i, w int) []string {
 	// under the author's name: lead (2) + age (5) + space = column 8
 	const indent = "      " // after the 2-column lead
 	bw := w - 2 - len(indent) - gw
-	text := clip(it.Post.Preview(), bw, previewLines)
-	quote := clip(strings.Join(strings.Fields(it.Post.Quote), " "), bw-2, quoteLines)
+	text, quote := m.bodyLines(it, bw)
 	if len(text) == 0 && len(quote) == 0 {
 		text = []string{"(no text)"}
 	}
