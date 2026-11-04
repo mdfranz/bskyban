@@ -1405,7 +1405,11 @@ func (m model) postRight(cw int) []string {
 	it := m.items[m.cur]
 	var lines []string
 	if it.By != "" {
-		lines = append(lines, accentStyle.Render("↻ Reposted by @"+it.By), "")
+		by := "↻ Reposted by @" + it.By
+		if it.RepostedAt != "" {
+			by += " · " + ageOf(it.RepostedAt) + " ago"
+		}
+		lines = append(lines, accentStyle.Render(by), "")
 	}
 	lines = append(lines, currentPost(fmt.Sprintf("This post · %d of %d", m.cur+1, len(m.items)), it.Post, it, cw)...)
 	return append(lines, m.recentLines(it.Author.DID, cw, it.Post)...)
@@ -1657,17 +1661,46 @@ const previewLines = 3
 
 // preview is the text shown for a post in the list: its text, then any
 // attachments and quoted post, so image-only posts still say something.
+// preview is the post's own text and attachments as one paragraph (no stray line
+// breaks). A quoted post is left out; itemLines shows it on lines of its own.
 func preview(p Post) string {
-	parts := []string{strings.Join(strings.Fields(p.Text), " ")}
-	parts = append(parts, p.Attach...)
-	if p.Quote != "" {
-		parts = append(parts, "▎ "+p.Quote)
-	}
-	text := strings.Join(strings.Fields(strings.Join(parts, " ")), " ") // one paragraph, no stray line breaks
+	parts := append([]string{p.Text}, p.Attach...)
+	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+}
+
+// quoteLines is how many lines of a quoted post the list shows.
+const quoteLines = 2
+
+// clip hard-wraps text to w columns, keeping at most n lines (the last ends in "…"
+// when something was cut). Links are not needed in the list, so OSC 8 is removed.
+func clip(text string, w, n int) []string {
 	if text == "" {
-		text = "(no text)"
+		return nil
 	}
-	return text
+	lines := strings.Split(oscRe.ReplaceAllString(strings.Join(wrapText(text, w), "\n"), ""), "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+		lines[n-1] = truncateWidth(lines[n-1]+" …", w)
+	}
+	return lines
+}
+
+// inThread reports whether item i is a reply in the same thread as the item above
+// it, so the list draws them joined. Only adjacent posts are joined; nothing moves.
+func (m model) inThread(i int) bool {
+	if i <= 0 || i >= len(m.items) {
+		return false
+	}
+	it := m.items[i]
+	return it.Post.Reply && it.By == "" && it.threadRoot() == m.items[i-1].threadRoot()
+}
+
+// ageOf is how long ago s (RFC 3339) was, or "?".
+func ageOf(s string) string {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return humanAge(time.Since(t))
+	}
+	return "?"
 }
 
 func (m model) listWidth() int {
@@ -1681,9 +1714,14 @@ func (m model) listWidth() int {
 // text (ending in … if there is more), and a blank separator line.
 func (m model) itemLines(i, w int) []string {
 	it := m.items[i]
-	age := "?"
-	if t, err := time.Parse(time.RFC3339, it.Post.CreatedAt); err == nil {
-		age = humanAge(time.Since(t))
+	age := ageOf(it.Post.CreatedAt)
+	if it.By != "" && it.RepostedAt != "" {
+		age = ageOf(it.RepostedAt) // when it reached your timeline; the post's own age is a tag
+	}
+	threaded := m.inThread(i)
+	gutter, gw := "", 0 // joins a reply to the post above it
+	if threaded {
+		gutter, gw = "│ ", 2
 	}
 	name := it.Author.DisplayName
 	if name == "" {
@@ -1697,6 +1735,9 @@ func (m model) itemLines(i, w int) []string {
 	}
 	if it.By != "" {
 		add("↻ @"+it.By, accentStyle)
+		if posted := ageOf(it.Post.CreatedAt); it.RepostedAt != "" && posted != age {
+			add("· posted "+posted, dimStyle)
+		}
 	}
 	if it.Post.Reply {
 		add("reply", dimStyle)
@@ -1717,30 +1758,47 @@ func (m model) itemLines(i, w int) []string {
 		add("kept", okStyle)
 	}
 	tailPlain, tail := strings.Join(tagsPlain, " "), strings.Join(tags, " ")
-	who = truncateWidth(who, max(w-(2+5+1+1+lipgloss.Width(tailPlain)), 10))
+	who = truncateWidth(who, max(w-(2+gw+5+1+1+lipgloss.Width(tailPlain)), 10))
 
-	// plain, hard-wrapped preview text (links are not needed in the list)
-	body := strings.Split(oscRe.ReplaceAllString(strings.Join(wrapText(preview(it.Post), w-6), "\n"), ""), "\n")
-	if len(body) > previewLines {
-		body = body[:previewLines]
-		body[previewLines-1] = truncateWidth(body[previewLines-1]+" …", w-6)
+	// the post's own text, then the quoted post on lines of its own, both lined up
+	// under the author's name: lead (2) + age (5) + space = column 8
+	const indent = "      " // after the 2-column lead
+	bw := w - 2 - len(indent) - gw
+	text := clip(preview(it.Post), bw, previewLines)
+	quote := clip(strings.Join(strings.Fields(it.Post.Quote), " "), bw-2, quoteLines)
+	if len(text) == 0 && len(quote) == 0 {
+		text = []string{"(no text)"}
 	}
 
 	var lines []string
 	if i == m.cur {
-		lines = append(lines, selStyle.Width(w).Render(fmt.Sprintf("▸ %-5s %s %s", age, who, tailPlain)))
-		for _, l := range body {
-			lines = append(lines, selStyle.Width(w).Render("      "+l))
+		lines = append(lines, selStyle.Width(w).Render(strings.TrimRight(fmt.Sprintf("▸ %s%-5s %s %s", gutter, age, who, tailPlain), " ")))
+		for _, l := range text {
+			lines = append(lines, selStyle.Width(w).Render("  "+gutter+indent+l))
+		}
+		for _, l := range quote {
+			lines = append(lines, selStyle.Width(w).Render("  "+gutter+indent+"▎ "+l))
 		}
 	} else {
 		lead := "  "
 		if isFresh {
 			lead = fresh.Render("┃") + " "
 		}
-		lines = append(lines, fmt.Sprintf("%s%s %s %s", lead, dimStyle.Render(fmt.Sprintf("%-5s", age)), titleStyle.Render(who), tail))
-		for _, l := range body {
-			lines = append(lines, lead+"    "+dimStyle.Render(l))
+		lead += dimStyle.Render(gutter)
+		header := fmt.Sprintf("%s%s %s", lead, dimStyle.Render(fmt.Sprintf("%-5s", age)), titleStyle.Render(who))
+		if tail != "" {
+			header += " " + tail
 		}
+		lines = append(lines, header)
+		for _, l := range text {
+			lines = append(lines, lead+indent+dimStyle.Render(l))
+		}
+		for _, l := range quote {
+			lines = append(lines, lead+indent+accentStyle.Render("▎ ")+dimStyle.Render(l))
+		}
+	}
+	if m.inThread(i + 1) {
+		return append(lines, "  "+dimStyle.Render("│")) // the next post continues this thread
 	}
 	return append(lines, "")
 }

@@ -540,8 +540,10 @@ func TestListShowsUpToThreeLinesOfEachPost(t *testing.T) {
 	}
 	m.items = append(m.items, FeedItem{Author: Profile{DID: "4", Handle: "quote.bsky.social"},
 		Post: Post{Text: "look", Quote: "@q.bsky.social: first line\n\nsecond line\n\nthird"}})
-	if got := len(m.itemLines(3, m.listWidth())); got != 3 {
-		t.Errorf("a quote with line breaks should still preview as one paragraph, got %d lines", got)
+	if ql := m.itemLines(3, m.listWidth()); len(ql) != 4 { // header, own text, quote, separator
+		t.Errorf("a quote should be one paragraph on a line of its own, got %d lines:\n%s", len(ql), strings.Join(ql, "\n"))
+	} else if q := ansiRe.ReplaceAllString(ql[2], ""); !strings.Contains(q, "▎ @q.bsky.social: first line second line third") || strings.Contains(ql[1], "@q.bsky.social") {
+		t.Errorf("quote should follow the post's own text on its own line: text=%q quote=%q", ql[1], q)
 	}
 	lines := m.itemLines(0, m.listWidth())
 	if len(lines) != 1+previewLines+1 { // header, 3 text lines, separator

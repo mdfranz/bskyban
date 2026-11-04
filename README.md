@@ -100,8 +100,10 @@ bskyban feed --fancy         # highlight newly inserted posts (or BSKYBAN_FANCY=
 bskyban feed --list [--json] # print the Reposts candidates instead
 ```
 
-**Following** is your home timeline (accounts you follow). The list shows one post
-per two lines; open one to see it in full next to its author's profile, including
+**Following** is your home timeline (accounts you follow). Each post shows up to three
+lines, with a quoted post on up to two lines of its own (`▎`). A repost is aged by when it
+was reposted (`↻ @who · posted 8m` gives the post's own age). Replies right below a post in
+the same thread are joined to it with a `│` line; open one to see it in full next to its author's profile, including
 the parent of a reply, quoted posts, image links and recent posts by the author.
 
 | Key | List | Post view |

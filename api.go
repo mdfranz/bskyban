@@ -336,8 +336,9 @@ type feedEntry struct {
 		} `json:"parent"`
 	} `json:"reply"`
 	Reason struct {
-		Type string  `json:"$type"`
-		By   Profile `json:"by"`
+		Type      string  `json:"$type"`
+		By        Profile `json:"by"`
+		IndexedAt string  `json:"indexedAt"` // when it was reposted
 	} `json:"reason"`
 }
 
@@ -451,6 +452,16 @@ type FeedItem struct {
 	CID    string
 	Root   postRef // thread root when the post is a reply
 	Like   string  // AT URI of your like of this post, if you liked it
+
+	RepostedAt string // when By reposted it (RFC 3339), for reposts
+}
+
+// threadRoot is the URI of the thread this item belongs to: its root, or itself.
+func (it FeedItem) threadRoot() string {
+	if it.Root.URI != "" {
+		return it.Root.URI
+	}
+	return it.URI
 }
 
 // replyTo is the reply reference for answering this post.
@@ -481,7 +492,7 @@ func (c *Client) GetTimeline(ctx context.Context, cursor string, limit int) ([]F
 	for _, e := range entries {
 		it := e.item()
 		if e.isRepost() {
-			it.By = e.Reason.By.Handle
+			it.By, it.RepostedAt = e.Reason.By.Handle, e.Reason.IndexedAt
 			it.Post.Repost = false // this is the original post; By says who reposted it
 		}
 		items = append(items, it)
