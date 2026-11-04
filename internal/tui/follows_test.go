@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
 )
@@ -71,7 +70,7 @@ func TestClosedFollowingBrowserIgnoresLateResults(t *testing.T) {
 	m = next.(model)
 	next, _ = m.Update(key("esc"))
 	m = next.(model)
-	var msg tea.Msg = cmd()
+	msg := cmd()
 	next, _ = m.Update(msg)
 	if next.(model).follows != nil {
 		t.Fatal("late response reopened browser")
