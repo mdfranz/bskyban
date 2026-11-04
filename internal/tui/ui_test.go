@@ -364,9 +364,9 @@ func TestFollowingListAndPostView(t *testing.T) {
 	if m.cur != 1 {
 		t.Fatalf("cur = %d", m.cur)
 	}
-	m = press(m, "enter")
+	m = press(m, "right")
 	if !m.inPost {
-		t.Fatal("enter should open the post")
+		t.Fatal("right should open the post")
 	}
 	v = regexp.MustCompile(`\x1b\][^\x1b]*\x1b\\`).ReplaceAllString(m.View(), "")
 	for _, w := range []string{"Rando", "buy now", "Reposted by @friend.bsky.social", "▎ @q.bsky.social: quoted", "image 1: https://cdn.bsky.app/img/1.jpg", "esc back"} {

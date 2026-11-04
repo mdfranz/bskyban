@@ -105,7 +105,7 @@ func TestPostViewShowsEngagementAndLink(t *testing.T) {
 
 	m, f := feedWithTimeline(t)
 	m.items = []bsky.FeedItem{it}
-	m = press(m, "enter")
+	m = press(m, "right")
 	v := termtext.StripLinks(termtext.StripANSI(m.View()))
 	if !strings.Contains(v, "120 likes · 1 repost · 18 replies · 0 quotes · open post ↗") {
 		t.Errorf("stats line missing:\n%s", v)
@@ -174,7 +174,7 @@ func TestHintsArePinnedToTheBottomRow(t *testing.T) {
 			Post: bsky.Post{Text: strings.Repeat("long text ", 40)}})
 	}
 	check("full list", m)
-	check("post view", press(m, "enter"))
+	check("post view", press(m, "right"))
 
 	m.width = 50 // narrow: the hints wrap onto several rows, still at the bottom
 	check("narrow", m)

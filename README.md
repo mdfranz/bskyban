@@ -154,7 +154,8 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 |---|---|---|
 | `↑` / `↓` | move | previous / next post |
 | `PgUp` / `PgDn` | move a page | scroll the panel |
-| `Enter` / `→` | open post | next post |
+| `→` | open post | next post |
+| `Enter` | open link picker | open link picker |
 | `Esc` / `Backspace` | | back to list |
 | `←` | | previous post |
 | `b` | block the author | block the author |
@@ -172,10 +173,9 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 
 In the feed `h` is the heart and `l` does nothing: use the arrow keys to move. The vim-style `h`/`l` pair only applies to the follower review above.
 
-`o` numbers every link in the selected post along the bottom: the post on bsky.app, its link
-card, URLs in its text, the quoted post, mentioned accounts and the author's profile. Press
-`1`–`9` to open one, `o` again for the post's only outside link (or the post itself when
-there are none or several), or any other key to close it.
+`Enter` or `o` opens a picker containing the post on bsky.app, its link card,
+URLs in its text, the quoted post, mentioned accounts and the author's profile.
+Use the arrow keys to highlight a link, `Enter` to open it, or `Esc` to cancel.
 
 `i` opens a post's images (`▣`) in your browser: `$BROWSER` if set (on ChromeOS Linux
 that is `garcon-url-handler`, which opens Chrome), otherwise `open` on macOS or `xdg-open`

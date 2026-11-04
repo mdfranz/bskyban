@@ -132,6 +132,7 @@ type model struct {
 	animating bool                 // an animTickMsg is scheduled
 	now       func() time.Time
 
+	pickIndex int             // highlighted link in the picker
 	picking   []pickLink      // links offered by o, until one is chosen or it closes
 	composing bool            // writing a new post (feed mode)
 	replyTo   *bsky.FeedItem  // ...as an answer to this post
@@ -1104,7 +1105,9 @@ func (m model) browseKey(key, confirm string) (model, tea.Cmd) {
 			m.inPost, m.scroll = true, 0
 		}
 	case "enter":
-		if !m.inPost && len(m.items) > 0 {
+		if m.timeline != nil {
+			return m.openKey()
+		} else if !m.inPost && len(m.items) > 0 {
 			m.inPost, m.scroll = true, 0
 		}
 	case "esc", "backspace":
@@ -1561,7 +1564,7 @@ func (m model) hintItems() []string {
 		return []string{"r retry saving (actions and quit wait for a successful save)"}
 	}
 	if m.picking != nil {
-		return []string{"1-" + fmt.Sprint(len(m.picking)) + " open", "o default", "any other key closes"}
+		return []string{"↑ ↓ select", "enter open", "esc cancel"}
 	}
 	if m.composing {
 		if m.replyTo != nil {
@@ -1577,6 +1580,9 @@ func (m model) hintItems() []string {
 		items = []string{"↑ ↓ prev/next", "PgUp PgDn scroll", "esc back", "b block", "f follow", "k keep", "u undo"}
 	default:
 		items = []string{"↑ ↓ move", "enter open", "b block", "f follow", "k keep", "u undo"}
+		if m.timeline != nil {
+			items[1] = "→ post"
+		}
 	}
 	if len(m.tabs) > 1 {
 		items = append(items, "tab switch")
@@ -1585,7 +1591,7 @@ func (m model) hintItems() []string {
 		if _, own := m.ownItem(); own {
 			items = append(items, "d delete")
 		}
-		items = append(items, "r reply", "h like", "o open link")
+		items = append(items, "r reply", "h like", "enter/o open link")
 		if _, ok := m.postImages(); ok {
 			items = append(items, "i open images")
 		}
@@ -1648,7 +1654,7 @@ func (m model) View() string {
 	case m.moreBusy:
 		bottom = append(bottom, dimStyle.Render("loading more…"))
 	case m.picking != nil:
-		bottom = append(bottom, warnStyle.Render(strings.Join(m.pickerLines(), "\n")))
+		bottom = append(bottom, strings.Join(m.pickerLines(), "\n"))
 	case m.status != "" && !m.composing:
 		bottom = append(bottom, warnStyle.Render(m.status))
 	}

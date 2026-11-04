@@ -235,7 +235,7 @@ func TestCurrentPostIsMarkedAndNotRepeatedInRecentPosts(t *testing.T) {
 func TestHIsHeartInTheFeedButStillMovesInReview(t *testing.T) {
 	m, f := feedWithTimeline(t)
 	m.items[0].URI, m.items[0].CID = "at://did:friend/app.bsky.feed.post/1", "c1"
-	m = press(m, "enter") // open the post; h used to mean "previous" here
+	m = press(m, "right") // open the post; h used to mean "previous" here
 	m = step(m, key("h"))
 	if f.Joined() != "like" || m.cur != 0 {
 		t.Errorf("h should like and stay on the post: calls=%q cur=%d", f.Joined(), m.cur)
@@ -247,7 +247,7 @@ func TestHIsHeartInTheFeedButStillMovesInReview(t *testing.T) {
 
 func TestLNoLongerMovesRightInTheFeedButDoesInReview(t *testing.T) {
 	m, _ := feedWithTimeline(t)
-	m = press(m, "enter")
+	m = press(m, "right")
 	m = press(m, "l")
 	if m.cur != 0 {
 		t.Errorf("l should do nothing in the Following post view: cur=%d", m.cur)
