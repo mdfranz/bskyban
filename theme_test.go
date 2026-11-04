@@ -243,3 +243,12 @@ func TestThemeCLI(t *testing.T) {
 		}
 	}
 }
+
+func TestOnlyAdaptiveThemesDetectTheBackground(t *testing.T) {
+	want := map[string]bool{"auto": true, "dark": false, "light": false, "ansi": false, "dracula": false, "catppuccin": true}
+	for _, th := range themes {
+		if got := th.adaptive(); got != want[th.Name] {
+			t.Errorf("%s: adaptive = %v, want %v", th.Name, got, want[th.Name])
+		}
+	}
+}

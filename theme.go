@@ -73,6 +73,21 @@ func makeThemes() []Theme {
 
 var theme Theme
 
+// adaptive reports whether any of the theme's colours depend on the terminal's
+// background, so it must be detected before the TUI starts.
+func (t Theme) adaptive() bool {
+	isAdaptive := func(c lipgloss.TerminalColor) bool {
+		_, ok := c.(lipgloss.AdaptiveColor)
+		return ok
+	}
+	for _, c := range append([]lipgloss.TerminalColor{t.Text, t.Dim, t.Warn, t.Error, t.OK, t.Heading, t.Accent, t.SelBG}, t.Fresh...) {
+		if isAdaptive(c) {
+			return true
+		}
+	}
+	return false
+}
+
 func init() { applyTheme(themes[0]) }
 
 func themeByName(name string) (Theme, error) {

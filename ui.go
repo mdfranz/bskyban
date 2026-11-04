@@ -193,6 +193,13 @@ func newPostsModel(a *app, tl timelineFunc) model {
 }
 
 func runTUI(m model) error {
+	if theme.adaptive() {
+		// Ask the terminal for its background now, while nothing else reads from it.
+		// Lip Gloss would otherwise ask on the first draw, inside the program, where
+		// Bubble Tea's input reader can swallow the reply (or read it as keys) and a
+		// silent terminal stalls the first frame for termenv's 5s timeout.
+		lipgloss.HasDarkBackground()
+	}
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
