@@ -1,11 +1,12 @@
 # bskyban
 
-Review new Bluesky followers one at a time and block the spam. Works as an
-interactive terminal UI ([Bubble Tea](https://github.com/charmbracelet/bubbletea))
+Browse your Bluesky timeline and review new followers one at a time to block the spam.
+Works as an interactive terminal UI ([Bubble Tea](https://github.com/charmbracelet/bubbletea))
 or as scriptable CLI commands, from one binary.
 
-By default it only shows **new followers you don't follow back** and haven't
-already decided on. For each one you see the profile (age, avatar, post and
+Plain `bskyban` opens your **timeline** (`bskyban feed`), with a tab for the authors of
+reposts you haven't handled. `bskyban review` shows **new followers you don't follow back**
+and haven't already decided on: for each one you see the profile (age, avatar, post and
 follow counts, bio) next to their recent posts, then choose to block or keep.
 
 ## Screenshots
@@ -77,7 +78,8 @@ non-TUI commands are unaffected by `BSKYBAN_THEME`.
 ## TUI
 
 ```sh
-bskyban                  # same as: bskyban review
+bskyban                  # same as: bskyban feed
+bskyban review              # review new followers one at a time
 bskyban review --since 20   # only the newest 20 followers
 bskyban review --backlog    # also revisit followers you skipped before
 ```

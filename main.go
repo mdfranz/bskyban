@@ -19,7 +19,7 @@ func main() {
 
 func realMain() int {
 	args := os.Args[1:]
-	cmd := "review"
+	cmd := "feed" // what plain `bskyban` runs
 	if len(args) > 0 && args[0][0] != '-' {
 		cmd, args = args[0], args[1:]
 	}

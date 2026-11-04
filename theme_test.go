@@ -227,6 +227,10 @@ func TestThemeCLI(t *testing.T) {
 		{[]string{"review", "--theme", "nope"}, 2, "unknown theme"},
 		{[]string{"posts", "--theme", "nope"}, 2, "unknown theme"},
 		{[]string{"feed", "--theme", "ansi"}, 1, "BSKY_HANDLE and BSKY_APP_PASSWORD must be set"},
+		// no command means feed: --pages is a feed flag, so it parses and reaches the
+		// (deliberately invalid) theme check; review rejects the flag first
+		{[]string{"--pages", "2"}, 2, "unknown theme"},
+		{[]string{"review", "--pages", "2"}, 2, "flag provided but not defined"},
 	} {
 		cmd := exec.Command(os.Args[0], append([]string{"-test.run=^TestThemeCLI$", "--"}, tc.args...)...)
 		out, err := cmd.CombinedOutput()
