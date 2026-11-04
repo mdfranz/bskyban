@@ -78,11 +78,12 @@ type (
 		err  error
 	}
 	actMsg struct {
-		undo   undoEntry
-		isUndo bool
-		newURI string // block/follow record created by this action, if any
-		lifted bool   // an earlier block/follow record was deleted on the way
-		err    error
+		undo       undoEntry
+		isUndo     bool
+		isUnfollow bool
+		newURI     string // block/follow record created by this action, if any
+		lifted     bool   // an earlier block/follow record was deleted on the way
+		err        error
 	}
 )
 
@@ -134,6 +135,7 @@ type model struct {
 
 	pickIndex int             // highlighted link in the picker
 	picking   []pickLink      // links offered by o, until one is chosen or it closes
+	follows   *followsBrowser // accounts followed by the selected author
 	composing bool            // writing a new post (feed mode)
 	replyTo   *bsky.FeedItem  // ...as an answer to this post
 	input     textinput.Model // the post being written
@@ -146,7 +148,7 @@ type model struct {
 	posts    map[string]*[]bsky.Post // nil value = in flight
 	records  map[string]string       // block/follow records behind current decisions (this session)
 	history  []undoEntry
-	confirm  string // DID awaiting a second `b` to block someone you follow
+	confirm  string // action awaiting confirmation
 	scroll   int    // right-panel scroll offset
 	status   string
 	err      error
@@ -533,6 +535,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case actMsg:
 		return m.applyAct(msg)
+	case followsPageMsg:
+		return m.applyFollowsPage(msg)
 	case postedMsg:
 		return m.applyPosted(msg)
 	case deletedMsg:
@@ -570,7 +574,11 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 	}
 	var err error
 	did := e.profile.DID
-	if msg.isUndo {
+	if msg.isUnfollow {
+		if entry, ok := m.a.State.Entries[did]; ok && entry.Decision == store.Followed {
+			err = m.a.State.Delete(did)
+		}
+	} else if msg.isUndo {
 		if e.prev != nil {
 			err = m.a.State.Put(did, *e.prev)
 		} else {
@@ -590,7 +598,24 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.pending = nil
-	if msg.isUndo {
+	if msg.isUnfollow {
+		delete(m.records, did)
+		m.history = slices.DeleteFunc(m.history, func(h undoEntry) bool { return h.profile.DID == did })
+		for i := range m.list {
+			if m.list[i].DID == did {
+				m.list[i].Viewer.Following = ""
+			}
+		}
+		for i := range m.items {
+			if m.items[i].Author.DID == did {
+				m.items[i].Author.Viewer.Following = ""
+			}
+		}
+		if p := m.profiles[did]; p != nil {
+			p.Viewer.Following = ""
+		}
+		m.status = fmt.Sprintf("unfollowed @%s", e.profile.Handle)
+	} else if msg.isUndo {
 		delete(m.records, did)
 		if msg.newURI != "" {
 			m.records[did] = msg.newURI
@@ -685,6 +710,9 @@ func (m model) auditEvent(msg actMsg) store.AuditEvent {
 		}
 		ev.Prev = e.decision
 	}
+	if msg.isUnfollow {
+		ev.Action, ev.Record = "unfollow", e.record
+	}
 	return ev
 }
 
@@ -693,7 +721,7 @@ func (m model) auditEvent(msg actMsg) store.AuditEvent {
 func (m model) auditEvents(msg actMsg) []store.AuditEvent {
 	e := msg.undo
 	main := m.auditEvent(msg)
-	if !msg.isUndo && e.prev != nil && app.IsRemote(e.prev.Decision) && e.prev.Decision != e.decision {
+	if !msg.isUndo && !msg.isUnfollow && e.prev != nil && app.IsRemote(e.prev.Decision) && e.prev.Decision != e.decision {
 		lift := main
 		lift.Action, lift.Detail, lift.Record = liftAction[e.prev.Decision], "lifted by "+e.decision, ""
 		return []store.AuditEvent{lift, main}
@@ -708,6 +736,9 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.picking != nil && key != "ctrl+c" {
 		return m.pickKey(key)
+	}
+	if m.follows != nil && key != "ctrl+c" {
+		return m.followsKey(key)
 	}
 	switch key {
 	case "q", "ctrl+c":
@@ -732,6 +763,12 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.confirm = ""
 	if m.busy {
 		return m, nil
+	}
+	if key == "u" {
+		return m.unfollowKey(confirm)
+	}
+	if key == "F" {
+		return m.openFollows()
 	}
 	if key == "n" && m.timeline != nil {
 		m.composing, m.replyTo, m.status, m.err = true, nil, "", nil
@@ -1050,7 +1087,7 @@ func (m model) candKey(key string) (model, tea.Cmd) {
 		return move(0)
 	case "end":
 		return move(len(m.list) - 1)
-	case "u":
+	case "U":
 		return m.undo()
 	}
 	p, ok := m.subject()
@@ -1113,7 +1150,7 @@ func (m model) browseKey(key, confirm string) (model, tea.Cmd) {
 	case "esc", "backspace":
 		m.inPost, m.scroll = false, 0
 		m = m.ensureVisible()
-	case "u":
+	case "U":
 		return m.undo()
 	case "d":
 		return m.deleteKey(confirm)
@@ -1150,6 +1187,47 @@ func (m model) maybeLoadMore() (model, tea.Cmd) {
 	}
 	m.moreBusy = true
 	return m, loadTimeline(m.timeline, m.tlCursor)
+}
+
+// unfollowKey confirms the selected account before removing its follow record.
+func (m model) unfollowKey(confirm string) (model, tea.Cmd) {
+	p, ok := m.subject()
+	if !ok {
+		return m, nil
+	}
+	if confirm != "unfollow:"+p.DID {
+		m.confirm = "unfollow:" + p.DID
+		m.status = fmt.Sprintf("Unfollow @%s? Press u again to confirm.", p.Handle)
+		return m, nil
+	}
+	uri := p.Viewer.Following
+	if uri == "" && m.a.State.Entries[p.DID].Decision == store.Followed {
+		uri = m.records[p.DID]
+	}
+	idx := m.idx
+	if m.active() != tabCandidates {
+		idx = m.cur
+	}
+	e := undoEntry{tab: m.active(), idx: idx, profile: p, decision: store.Followed, record: uri}
+	c := m.a.Client
+	m.busy, m.err, m.status = true, nil, ""
+	return m, func() tea.Msg {
+		msg := actMsg{undo: e, isUnfollow: true}
+		if msg.undo.record == "" {
+			profile, err := c.GetProfile(context.Background(), p.DID)
+			if err != nil {
+				msg.err = err
+				return msg
+			}
+			msg.undo.record = profile.Viewer.Following
+		}
+		if msg.undo.record == "" {
+			msg.err = fmt.Errorf("you do not follow @%s", p.Handle)
+			return msg
+		}
+		msg.err = c.Unfollow(context.Background(), msg.undo.record)
+		return msg
+	}
 }
 
 // decideKey applies decision to p, unless that is already recorded.
@@ -1560,6 +1638,12 @@ func (m model) tabBar() string {
 
 // hintItems are the key hints for the current screen.
 func (m model) hintItems() []string {
+	if m.follows != nil {
+		if m.err != nil {
+			return []string{"R retry", "esc back"}
+		}
+		return []string{"↑ ↓ move", "enter open profile", "esc back"}
+	}
 	if m.pending != nil {
 		return []string{"r retry saving (actions and quit wait for a successful save)"}
 	}
@@ -1575,11 +1659,11 @@ func (m model) hintItems() []string {
 	var items []string
 	switch {
 	case m.active() == tabCandidates:
-		items = []string{"← → move", "↑ ↓ scroll", "b block", "f follow", "k keep", "s skip", "u undo"}
+		items = []string{"← → move", "↑ ↓ scroll", "b block", "f follow", "k keep", "s skip", "u unfollow", "U undo"}
 	case m.inPost:
-		items = []string{"↑ ↓ prev/next", "PgUp PgDn scroll", "esc back", "b block", "f follow", "k keep", "u undo"}
+		items = []string{"↑ ↓ prev/next", "PgUp PgDn scroll", "esc back", "b block", "f follow", "k keep", "u unfollow", "U undo"}
 	default:
-		items = []string{"↑ ↓ move", "enter open", "b block", "f follow", "k keep", "u undo"}
+		items = []string{"↑ ↓ move", "enter open", "b block", "f follow", "k keep", "u unfollow", "U undo"}
 		if m.timeline != nil {
 			items[1] = "→ post"
 		}
@@ -1597,6 +1681,7 @@ func (m model) hintItems() []string {
 		}
 		items = append(items, "n new post", "R refresh")
 	}
+	items = append(items, "F following")
 	return append(items, "q quit")
 }
 
@@ -1677,6 +1762,9 @@ func (m model) View() string {
 
 // content is the active tab's main area.
 func (m model) content() string {
+	if m.follows != nil {
+		return m.followsView()
+	}
 	var b strings.Builder
 	switch m.active() {
 	case tabCandidates:
@@ -1817,7 +1905,7 @@ func (m model) itemLines(i, w int) []string {
 	if it.By != "" {
 		add("↻ reposted by @"+it.By, accentStyle)
 		if posted := ageOf(it.Post.CreatedAt); it.RepostedAt != "" && posted != age {
-			add("· written "+posted+" ago", dimStyle)
+			add("· written "+posted+" ago", headingStyle.Bold(false).Italic(true))
 		}
 	}
 	if it.Post.Reply {
@@ -1844,6 +1932,10 @@ func (m model) itemLines(i, w int) []string {
 	}
 	tailPlain, tail := strings.Join(tagsPlain, " "), strings.Join(tags, " ")
 	who = termtext.TruncateWidth(who, max(w-(2+gw+5+1+1+lipgloss.Width(tailPlain)), 10))
+	namePart, handlePart := who, ""
+	if strings.HasPrefix(who, name+" (@") {
+		namePart, handlePart = who[:len(name)], who[len(name):]
+	}
 
 	// the post's own text, then the quoted post on lines of its own, both lined up
 	// under the author's name: lead (2) + age (5) + space = column 8
@@ -1857,7 +1949,14 @@ func (m model) itemLines(i, w int) []string {
 
 	var lines []string
 	if i == m.cur {
-		lines = append(lines, selStyle.Width(w).Render(strings.TrimRight(fmt.Sprintf("▸ %s%s %s %s", gutter, ageLink(it, age), selStyle.Bold(true).Render(who), tailPlain), " ")))
+		styledWho := selStyle.Bold(true).Render(namePart) + selStyle.Foreground(theme.Heading).Render(handlePart)
+		selectedTags := append([]string(nil), tagsPlain...)
+		for j, tag := range selectedTags {
+			if strings.HasPrefix(tag, "· written ") {
+				selectedTags[j] = selStyle.Foreground(theme.Heading).Italic(true).Render(tag)
+			}
+		}
+		lines = append(lines, selStyle.Width(w).Render(strings.TrimRight(fmt.Sprintf("▸ %s%s %s %s", gutter, ageLink(it, age), styledWho, strings.Join(selectedTags, " ")), " ")))
 		for _, l := range text {
 			lines = append(lines, selStyle.Width(w).Render("  "+gutter+indent+l))
 		}
@@ -1870,7 +1969,8 @@ func (m model) itemLines(i, w int) []string {
 			lead = fresh.Render("┃") + " "
 		}
 		lead += gutter
-		header := fmt.Sprintf("%s%s %s", lead, dimStyle.Render(ageLink(it, age)), titleStyle.Render(who))
+		styledWho := titleStyle.Render(namePart) + headingStyle.Bold(false).Render(handlePart)
+		header := fmt.Sprintf("%s%s %s", lead, dimStyle.Render(ageLink(it, age)), styledWho)
 		if tail != "" {
 			header += " " + tail
 		}

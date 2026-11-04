@@ -100,10 +100,11 @@ bskyban review --backlog    # also revisit followers you skipped before
 | `Home` / `End` | first / last follower |
 | `↑` / `↓`, `PgUp` / `PgDn` | scroll the posts panel |
 | `b` | block (creates a block on your account immediately) |
-| `f` | follow (creates a follow on your account immediately; undo with `u`) |
+| `f` | follow (creates a follow on your account immediately; undo with `U`) |
 | `k` | keep (record as reviewed, no action) |
 | `s` | skip (hide from the default view; return with `--backlog`) |
-| `u` | undo the last decision (restores whatever was recorded before) |
+| `u` | unfollow the selected account (press twice to confirm) |
+| `U` | undo the last decision (restores whatever was recorded before) |
 | `q` | quit |
 
 Following someone records them as `followed`, so they leave the new list. Changing your
@@ -160,7 +161,9 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 | `←` | | previous post |
 | `b` | block the author | block the author |
 | `f` | follow the author | follow the author |
-| `k` / `u` | keep / undo | keep / undo |
+| `F` | browse accounts the author follows | browse accounts the author follows |
+| `k` / `U` | keep / undo | keep / undo |
+| `u` | unfollow the author (press twice) | unfollow the author (press twice) |
 | `r` | reply to the selected post | reply to this post |
 | `h` | like (again to remove your like) | like / unlike |
 | `o` | pick a link in the post to open | pick a link in the post to open |

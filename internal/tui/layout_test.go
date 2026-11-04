@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -10,7 +11,28 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
+	"github.com/muesli/termenv"
 )
+
+func TestAuthorHandleHasDistinctColour(t *testing.T) {
+	preserveTheme(t)
+	previous := lipgloss.DefaultRenderer()
+	t.Cleanup(func() { lipgloss.SetDefaultRenderer(previous) })
+	r := lipgloss.NewRenderer(io.Discard)
+	r.SetColorProfile(termenv.TrueColor)
+	lipgloss.SetDefaultRenderer(r)
+	th, _ := ThemeByName("dracula")
+	applyTheme(th)
+	m, _ := followingModel(t)
+	m.items = []bsky.FeedItem{{Author: bsky.Profile{DID: "did:a", Handle: "alice.bsky.social", DisplayName: "Alice"}}}
+	for _, cur := range []int{0, 1} {
+		m.cur = cur
+		line := m.itemLines(0, m.listWidth())[0]
+		if !strings.Contains(line, "\x1b[38;2;139;233;253") || !strings.Contains(termtext.StripANSI(line), "Alice (@alice.bsky.social)") {
+			t.Errorf("cur=%d: handle colour or author missing: %q", cur, line)
+		}
+	}
+}
 
 func TestRepliesInTheSameThreadAreJoined(t *testing.T) {
 	m, _ := followingModel(t)

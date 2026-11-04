@@ -91,6 +91,14 @@ func New(t *testing.T) (*app.App, *PDS) {
 			default: // "x": already blocked
 				fmt.Fprint(w, `{"did":"x","handle":"x","viewer":{"blocking":"at://did:me/app.bsky.graph.block/rk0"}}`)
 			}
+		case "/xrpc/app.bsky.graph.getFollows":
+			if r.URL.Query().Get("actor") != "did:friend" {
+				http.Error(w, "wrong actor", http.StatusBadRequest)
+			} else if r.URL.Query().Get("cursor") == "next" {
+				fmt.Fprint(w, `{"follows":[{"did":"did:second","handle":"second.example","displayName":"Second"}]}`)
+			} else {
+				fmt.Fprint(w, `{"follows":[{"did":"did:first","handle":"first.example","displayName":"First"}],"cursor":"next"}`)
+			}
 		default:
 			http.NotFound(w, r)
 		}

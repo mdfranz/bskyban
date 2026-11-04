@@ -188,7 +188,7 @@ func TestRevisitShowsDecisionAndLettersOverride(t *testing.T) {
 	if f.Joined() != "block,unblock" {
 		t.Errorf("calls = %s, want block,unblock", f.Joined())
 	}
-	m = press(m, "u") // undo the keep: the earlier block is restored
+	m = press(m, "U") // undo the keep: the earlier block is restored
 	if got := m.a.State.Entries["did:a"].Decision; got != store.Blocked {
 		t.Errorf("after undo decision = %q, want blocked", got)
 	}
@@ -200,7 +200,7 @@ func TestRevisitShowsDecisionAndLettersOverride(t *testing.T) {
 func TestUndoBlockRemovesBlock(t *testing.T) {
 	m, f := candidates(t)
 	m = press(m, "b")
-	m = press(m, "u")
+	m = press(m, "U")
 	if _, ok := m.a.State.Entries["did:a"]; ok {
 		t.Error("undo should clear the decision")
 	}
@@ -214,8 +214,8 @@ func TestUndoRestoredBlockDeletesCurrentRecord(t *testing.T) {
 	m = press(m, "b")
 	m = press(m, "left")
 	m = press(m, "k")
-	m = press(m, "u")
-	m = press(m, "u")
+	m = press(m, "U")
+	m = press(m, "U")
 	if got := strings.Join(f.DeletedKeys(), ","); got != "rk1,rk2" {
 		t.Fatalf("deleted records = %s, want rk1,rk2", got)
 	}
@@ -286,7 +286,7 @@ func TestFailedSaveRetriesWithoutRepeatingRemoteAction(t *testing.T) {
 			m.a.State = bad
 			beforeIdx, beforeHistory := m.idx, len(m.history)
 			if undo {
-				m = press(m, "u")
+				m = press(m, "U")
 			} else {
 				m = press(m, "b")
 			}
