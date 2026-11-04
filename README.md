@@ -282,6 +282,23 @@ make smoke   # live, read-only CLI check against your account (see below)
 make run ARGS="--since 10"
 ```
 
+### Project layout
+
+```
+cmd/bskyban/        entry point: flag parsing and wiring
+internal/bsky/      Bluesky (XRPC) client and the types it returns
+internal/store/     decisions file and audit log
+internal/app/       logic shared by the TUI and the subcommands
+internal/tui/       Bubble Tea terminal UI, link picker, themes
+internal/cli/       the non-TUI subcommands and the log command
+internal/termtext/  sanitizing, hyperlinks and wrapping for terminal text
+internal/testpds/   fake Bluesky server for tests
+scripts/smoke.sh    live, read-only check against your account
+docs/screenshots/   images used in this README
+```
+
+See `ARCHITECTURE.md` for how the pieces fit together and `PKG.md` for dependencies.
+
 Talks to the AT Protocol XRPC API directly over `net/http` (no SDK):
 `createSession`, `getFollowers`, `getProfile(s)`, `getAuthorFeed`, and
 `createRecord`/`deleteRecord` for `app.bsky.graph.block`.
