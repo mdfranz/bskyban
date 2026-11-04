@@ -117,14 +117,14 @@ func TestPostViewShowsEngagementAndLink(t *testing.T) {
 		t.Error("open post should link to the post on bsky.app")
 	}
 
-	m = step(m, key("L"))
+	m = step(m, key("h"))
 	if f.joined() != "like" || m.items[0].Stats.Likes != 121 {
 		t.Fatalf("liking should count you: calls=%q likes=%d", f.joined(), m.items[0].Stats.Likes)
 	}
 	if v := ansiRe.ReplaceAllString(m.View(), ""); !strings.Contains(v, "♥ 121 likes (you liked this)") {
 		t.Errorf("liked stats missing:\n%s", v)
 	}
-	m = step(m, key("L"))
+	m = step(m, key("h"))
 	if m.items[0].Stats.Likes != 120 {
 		t.Errorf("unliking should take you off again: %d", m.items[0].Stats.Likes)
 	}
@@ -247,5 +247,25 @@ func TestListAgeLinksToThePost(t *testing.T) {
 	}
 	if h := m.itemLines(1, m.listWidth())[0]; strings.Contains(h, "\x1b]8;;") {
 		t.Errorf("no link without a post URI: %q", h)
+	}
+}
+
+func TestMediaMarkers(t *testing.T) {
+	for raw, want := range map[string]string{
+		`{"$type":"app.bsky.embed.images","images":[{"alt":"a  cat"}]}`:            "▣ a cat",
+		`{"$type":"app.bsky.embed.images","images":[{"alt":""},{"alt":"map"},{}]}`: "▣×3 map",
+		`{"$type":"app.bsky.embed.images","images":[{}]}`:                          "▣",
+		`{"$type":"app.bsky.embed.video","alt":"clip"}`:                            "▶ video clip",
+	} {
+		if got := describeEmbed(json.RawMessage(raw)); len(got) != 1 || got[0] != want {
+			t.Errorf("%s: got %q, want %q", raw, got, want)
+		}
+	}
+	for _, text := range []string{"aaaa bbbb ▣×3 county map", "aaaa bbbb ▶ video clip"} {
+		for _, l := range wrapText(text, 10) {
+			if strings.HasSuffix(l, "▣×3") || strings.HasSuffix(l, "▶") {
+				t.Errorf("marker stranded at a line end: %q", wrapText(text, 10))
+			}
+		}
 	}
 }

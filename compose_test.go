@@ -159,14 +159,14 @@ func TestLikeTogglesAndMarksEveryCopy(t *testing.T) {
 	uri := "at://did:rando/app.bsky.feed.post/9"
 	m.items[0].URI, m.items[0].CID = uri, "cid9"
 	m.items[1].URI, m.items[1].CID = uri, "cid9" // the same post, reposted
-	m = step(m, key("L"))
+	m = step(m, key("h"))
 	if f.joined() != "like" || m.items[0].Like == "" || m.items[1].Like == "" {
 		t.Fatalf("calls=%q likes=%q/%q err=%v", f.joined(), m.items[0].Like, m.items[1].Like, m.err)
 	}
 	if v := m.View(); !strings.Contains(v, "♥") {
 		t.Errorf("liked post should show ♥:\n%s", v)
 	}
-	m = step(m, key("L"))
+	m = step(m, key("h"))
 	if f.joined() != "like,unlike" || m.items[0].Like != "" || m.items[1].Like != "" {
 		t.Errorf("calls=%q likes=%q/%q", f.joined(), m.items[0].Like, m.items[1].Like)
 	}
@@ -179,7 +179,7 @@ func TestLikeAndReplyOnTheRepostedPostInTheRepostsTab(t *testing.T) {
 	item := FeedItem{Author: author, URI: "at://did:rando/app.bsky.feed.post/9", CID: "cid9", Post: Post{Text: "buy now"}}
 	m.list = []Profile{author}
 	m.ctxs = map[string]repostCtx{"did:rando": {Post: item.Post, Item: item, By: []string{"friend.bsky.social"}}}
-	m = step(m, key("L"))
+	m = step(m, key("h"))
 	if f.joined() != "like" || m.ctxs["did:rando"].Item.Like == "" {
 		t.Fatalf("calls=%q err=%v", f.joined(), m.err)
 	}
@@ -225,5 +225,58 @@ func TestCurrentPostIsMarkedAndNotRepeatedInRecentPosts(t *testing.T) {
 	}
 	if !strings.Contains(v, "older one") {
 		t.Errorf("other recent posts missing:\n%s", v)
+	}
+}
+
+func TestHIsHeartInTheFeedButStillMovesInReview(t *testing.T) {
+	m, f := feedWithTimeline(t)
+	m.items[0].URI, m.items[0].CID = "at://did:friend/app.bsky.feed.post/1", "c1"
+	m = press(m, "enter") // open the post; h used to mean "previous" here
+	m = step(m, key("h"))
+	if f.joined() != "like" || m.cur != 0 {
+		t.Errorf("h should like and stay on the post: calls=%q cur=%d", f.joined(), m.cur)
+	}
+	if strings.Contains(m.hint(), "L like") || !strings.Contains(m.hint(), "h like") {
+		t.Errorf("hint should say h like: %s", m.hint())
+	}
+}
+
+func TestLNoLongerMovesRightInTheFeedButDoesInReview(t *testing.T) {
+	m, _ := feedWithTimeline(t)
+	m = press(m, "enter")
+	m = press(m, "l")
+	if m.cur != 0 {
+		t.Errorf("l should do nothing in the Following post view: cur=%d", m.cur)
+	}
+	m = press(m, "right")
+	if m.cur != 1 {
+		t.Errorf("→ still moves to the next post: cur=%d", m.cur)
+	}
+	m.inPost, m.cur = false, 0
+	m = press(m, "l")
+	if m.inPost || m.cur != 0 {
+		t.Errorf("l should not open a post from the list: inPost=%v cur=%d", m.inPost, m.cur)
+	}
+
+	m.tab = 1 // Reposts
+	m.list = []Profile{{DID: "did:a", Handle: "a.bsky.social"}, {DID: "did:b", Handle: "b.bsky.social"}}
+	m.ctxs = map[string]repostCtx{}
+	m = press(m, "l")
+	if m.idx != 0 {
+		t.Errorf("l should not move to the next account in the feed: idx=%d", m.idx)
+	}
+	m = press(m, "right")
+	if m.idx != 1 {
+		t.Errorf("→ moves to the next account: idx=%d", m.idx)
+	}
+
+	r, _ := candidates(t) // follower review keeps its vim keys
+	r = press(r, "l")
+	if r.idx != 1 {
+		t.Errorf("l moves right in follower review: idx=%d", r.idx)
+	}
+	r = press(r, "h")
+	if r.idx != 0 {
+		t.Errorf("h moves left in follower review: idx=%d", r.idx)
 	}
 }

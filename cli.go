@@ -22,18 +22,19 @@ var errUsage = errors.New("usage")
 const usageText = `bskyban - review and block Bluesky followers
 
 Usage:
-  bskyban [review] [--since N] [--backlog]   interactive TUI (new followers only)
-  bskyban feed [--pages N] [--backlog] [--refresh 30s] [--fancy] [--list [--json]]
-                                        review authors of reposts in your timeline
+  bskyban [feed] [--pages N] [--backlog] [--refresh 30s] [--fancy] [--theme NAME] [--list [--json]]
+                                        your timeline, plus review of repost authors (the default)
+  bskyban review [--since N] [--backlog] [--theme NAME]   review new followers one at a time
   bskyban list [--since N] [--backlog] [--all] [--json]
   bskyban log [--since 7d] [--action block] [--who handle] [-n 50] [--json]
                                         show the audit log (no login needed)
+  bskyban themes                        preview colour themes (no login needed)
   bskyban baseline                      mark all current non-followed followers as old
   bskyban show <handle|did>
   bskyban block [--dry-run] <handle|did>... (use - to read from stdin)
   bskyban keep <handle|did>...
   bskyban unblock [--dry-run] <handle|did>...
-  bskyban posts [--refresh 30s] [--fancy] [--list [-n 20] [--json]]  browse your own posts (TUI), or print them
+  bskyban posts [--refresh 30s] [--fancy] [--theme NAME] [--list [-n 20] [--json]]  browse your own posts (TUI), or print them
   bskyban post [--dry-run] <text>...    publish a post (use - to read the text from stdin)
   bskyban delete-post [--dry-run] <post>...  delete your own posts (at:// URI, bsky.app link or rkey)
   bskyban like [--dry-run] <post>...    like posts (at:// URI or bsky.app link)
@@ -48,6 +49,7 @@ Environment:
   BSKYBAN_AUDIT                    optional audit log (default ~/.local/state/bskyban/audit.jsonl)
   XDG_STATE_HOME                   moves the default state directory
   BSKYBAN_FANCY                    1 = same as --fancy (highlight newly inserted posts)
+  BSKYBAN_THEME                    auto (default), dark, light, ansi, dracula, catppuccin
 `
 
 type app struct {

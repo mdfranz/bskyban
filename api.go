@@ -35,8 +35,9 @@ type Profile struct {
 	FollowsCount   int    `json:"followsCount"`
 	PostsCount     int    `json:"postsCount"`
 	Viewer         struct {
-		Blocking  string `json:"blocking"`
-		Following string `json:"following"` // set if you follow them
+		Blocking   string `json:"blocking"`
+		Following  string `json:"following"`  // set if you follow them
+		FollowedBy string `json:"followedBy"` // set if they follow you
 	} `json:"viewer"`
 }
 
@@ -203,6 +204,7 @@ type Post struct {
 
 	// Only set for posts that come with hydrated context (timeline / author feeds).
 	Quote        string   // "@handle: text" of a quoted post
+	QuoteURI     string   // AT URI of the quoted post
 	Images       []string // full-size image URLs
 	ParentHandle string   // for replies: who is being replied to
 	ParentText   string
@@ -269,6 +271,12 @@ func embedLink(raw json.RawMessage) *linkCard {
 	return nil
 }
 
+// Markers for media in a post: single-width, so rows line up in any terminal.
+const (
+	imageMark = "▣"
+	videoMark = "▶"
+)
+
 // describeEmbed turns a raw post embed into short one-line descriptions.
 func describeEmbed(raw json.RawMessage) []string {
 	if len(raw) == 0 || string(raw) == "null" {
@@ -290,22 +298,21 @@ func describeEmbed(raw json.RawMessage) []string {
 	var out []string
 	switch {
 	case strings.HasPrefix(e.Type, "app.bsky.embed.images"):
-		s := fmt.Sprintf("[%d image", len(e.Images))
+		s := imageMark // "▣", or "▣×3" for several, then the first alt text
 		if len(e.Images) != 1 {
-			s += "s"
+			s += fmt.Sprintf("×%d", len(e.Images))
 		}
-		s += "]"
 		for _, im := range e.Images {
 			if alt := strings.Join(strings.Fields(im.Alt), " "); alt != "" {
-				s += " alt: " + alt
+				s += " " + alt
 				break
 			}
 		}
 		out = append(out, s)
 	case strings.HasPrefix(e.Type, "app.bsky.embed.video"):
-		s := "[video]"
+		s := videoMark + " video"
 		if alt := strings.Join(strings.Fields(e.Alt), " "); alt != "" {
-			s += " alt: " + alt
+			s += " " + alt
 		}
 		out = append(out, s)
 	case e.Type == "app.bsky.embed.recordWithMedia":
@@ -366,7 +373,7 @@ type feedEntry struct {
 }
 
 // viewContext pulls a quoted post and image URLs out of a hydrated embed view.
-func viewContext(raw json.RawMessage) (quote string, images []string) {
+func viewContext(raw json.RawMessage) (quote, quoteURI string, images []string) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return
 	}
@@ -387,11 +394,12 @@ func viewContext(raw json.RawMessage) (quote string, images []string) {
 		}
 	}
 	if len(v.Media) > 0 { // recordWithMedia
-		_, mi := viewContext(v.Media)
+		_, _, mi := viewContext(v.Media)
 		images = append(images, mi...)
 	}
 	if len(v.Record) > 0 {
 		var r struct {
+			URI    string  `json:"uri"`
 			Author Profile `json:"author"`
 			Value  struct {
 				Text   string  `json:"text"`
@@ -405,6 +413,7 @@ func viewContext(raw json.RawMessage) (quote string, images []string) {
 			}
 			if r.Author.Handle != "" {
 				quote = "@" + r.Author.Handle + ": " + expandLinks(r.Value.Text, r.Value.Facets)
+				quoteURI = r.URI
 			}
 		}
 	}
@@ -425,7 +434,7 @@ func (e feedEntry) toPost() Post {
 		ParentHandle: e.Reply.Parent.Author.Handle,
 		ParentText:   e.Reply.Parent.Record.Text,
 	}
-	p.Quote, p.Images = viewContext(e.Post.Embed)
+	p.Quote, p.QuoteURI, p.Images = viewContext(e.Post.Embed)
 	if p.Quote != "" { // the quote text replaces the bare "[quote post]" marker
 		p.Attach = slices.DeleteFunc(p.Attach, func(s string) bool { return s == "[quote post]" })
 	}

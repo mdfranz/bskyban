@@ -15,14 +15,8 @@ import (
 )
 
 var (
-	titleStyle   = lipgloss.NewStyle().Bold(true)
-	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	errStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	okStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	headingStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	accentStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
-	selStyle     = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("236"))
+	titleStyle, dimStyle, warnStyle, errStyle    lipgloss.Style
+	okStyle, headingStyle, accentStyle, selStyle lipgloss.Style
 )
 
 const panelGap = 4
@@ -134,6 +128,7 @@ type model struct {
 	animating bool                 // an animTickMsg is scheduled
 	now       func() time.Time
 
+	picking   []pickLink      // links offered by o, until one is chosen or it closes
 	composing bool            // writing a new post (feed mode)
 	replyTo   *FeedItem       // ...as an answer to this post
 	input     textinput.Model // the post being written
@@ -198,6 +193,13 @@ func newPostsModel(a *app, tl timelineFunc) model {
 }
 
 func runTUI(m model) error {
+	if theme.adaptive() {
+		// Ask the terminal for its background now, while nothing else reads from it.
+		// Lip Gloss would otherwise ask on the first draw, inside the program, where
+		// Bubble Tea's input reader can swallow the reply (or read it as keys) and a
+		// silent terminal stalls the first frame for termenv's 5s timeout.
+		lipgloss.HasDarkBackground()
+	}
 	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	return err
 }
@@ -296,9 +298,6 @@ func (m model) readingTop() bool {
 // freshFor is how long a newly inserted post stays highlighted in fancy mode.
 const freshFor = 2 * time.Second
 
-// freshRamp is the highlight's colour from bright to faded (256-colour codes).
-var freshRamp = []string{"213", "177", "141", "105", "69", "61", "60", "59", "238"}
-
 // startAnim schedules the next highlight redraw while anything is still fading.
 func (m model) startAnim() (model, tea.Cmd) {
 	if len(m.fresh) == 0 || m.animating {
@@ -318,8 +317,8 @@ func (m model) freshStyle(key string) (lipgloss.Style, bool) {
 	if age >= freshFor {
 		return lipgloss.Style{}, false
 	}
-	i := min(int(age*time.Duration(len(freshRamp))/freshFor), len(freshRamp)-1)
-	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(freshRamp[i])), true
+	i := min(int(max(age, 0)*time.Duration(len(theme.Fresh))/freshFor), len(theme.Fresh)-1)
+	return lipgloss.NewStyle().Bold(true).Foreground(theme.Fresh[i]), true
 }
 
 // applyPending inserts the held-back posts at the top of the list. The post you
@@ -702,6 +701,9 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.composing {
 		return m.composeKey(k)
 	}
+	if m.picking != nil && key != "ctrl+c" {
+		return m.pickKey(key)
+	}
 	switch key {
 	case "q", "ctrl+c":
 		if m.pending != nil {
@@ -740,8 +742,14 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.SetValue("")
 		return m, m.input.Focus()
 	}
-	if key == "L" && m.timeline != nil {
+	if key == "h" && m.timeline != nil { // h for heart; in feed mode the arrow keys move left
 		return m.likeKey()
+	}
+	if key == "o" && m.timeline != nil {
+		return m.openKey()
+	}
+	if key == "i" && m.timeline != nil {
+		return m.openImagesKey()
 	}
 	if key == "R" && m.timeline != nil {
 		if len(m.newPosts) > 0 {
@@ -1029,6 +1037,9 @@ func (m model) candKey(key string) (model, tea.Cmd) {
 	case "left", "h":
 		return move(m.idx - 1)
 	case "right", "l":
+		if key == "l" && m.timeline != nil {
+			return m, nil // in the feed h is the heart, so l goes too; use the arrow keys
+		}
 		return move(m.idx + 1)
 	case "home":
 		return move(0)
@@ -1082,7 +1093,7 @@ func (m model) browseKey(key, confirm string) (model, tea.Cmd) {
 		if m.inPost {
 			setCur(m.cur - 1)
 		}
-	case "right", "l":
+	case "right":
 		if m.inPost {
 			setCur(m.cur + 1)
 		} else if len(m.items) > 0 {
@@ -1350,10 +1361,22 @@ func (m model) profilePanel(cw int, pos string) []string {
 		lines = append(lines, dimStyle.Render(fmt.Sprintf("%-12s", label))+" "+val)
 	}
 	row("Account age", humanAge(p.Age()))
+	if t, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
+		row("Joined", t.Format("2006-01-02"))
+	}
 	row("Avatar", avatar)
 	row("Posts", fmt.Sprint(p.PostsCount))
 	row("Followers", fmt.Sprint(p.FollowersCount))
 	row("Following", fmt.Sprint(p.FollowsCount))
+	if days := p.Age().Hours() / 24; days >= 1 {
+		row("Posts/day", fmt.Sprintf("%.1f", float64(p.PostsCount)/days))
+	}
+	if p.FollowsCount > 0 {
+		row("Fol. ratio", fmt.Sprintf("%.1f", float64(p.FollowersCount)/float64(p.FollowsCount)))
+	}
+	if p.Viewer.FollowedBy != "" {
+		row("Relation", "follows you")
+	}
 	lines = append(lines, "")
 	if bio := strings.TrimSpace(p.Description); bio != "" {
 		return append(lines, wrapText(bio, cw)...)
@@ -1533,6 +1556,9 @@ func (m model) hintItems() []string {
 	if m.pending != nil {
 		return []string{"r retry saving (actions and quit wait for a successful save)"}
 	}
+	if m.picking != nil {
+		return []string{"1-" + fmt.Sprint(len(m.picking)) + " open", "o default", "any other key closes"}
+	}
 	if m.composing {
 		if m.replyTo != nil {
 			return []string{"enter reply", "esc cancel"}
@@ -1555,20 +1581,25 @@ func (m model) hintItems() []string {
 		if _, own := m.ownItem(); own {
 			items = append(items, "d delete")
 		}
-		items = append(items, "r reply", "L like")
+		items = append(items, "r reply", "h like", "o open link")
+		if _, ok := m.postImages(); ok {
+			items = append(items, "i open images")
+		}
 		items = append(items, "n new post", "R refresh")
 	}
 	return append(items, "q quit")
 }
 
 // hintLines lays the hints out on one line if they fit, otherwise wraps them.
-func (m model) hintLines() []string {
-	items := m.hintItems()
-	if m.width <= 0 {
+func (m model) hintLines() []string { return wrapItems(m.hintItems(), m.width) }
+
+// wrapItems lays items out on one line if they fit in width, otherwise wraps them.
+func wrapItems(items []string, width int) []string {
+	if width <= 0 {
 		return []string{strings.Join(items, " · ")}
 	}
 	for _, sep := range []string{" · ", "  "} {
-		if h := strings.Join(items, sep); lipgloss.Width(h) <= m.width {
+		if h := strings.Join(items, sep); lipgloss.Width(h) <= width {
 			return []string{h}
 		}
 	}
@@ -1578,7 +1609,7 @@ func (m model) hintLines() []string {
 		switch {
 		case cur == "":
 			cur = it
-		case lipgloss.Width(cur)+2+lipgloss.Width(it) <= m.width:
+		case lipgloss.Width(cur)+2+lipgloss.Width(it) <= width:
 			cur += "  " + it
 		default:
 			lines = append(lines, cur)
@@ -1612,6 +1643,8 @@ func (m model) View() string {
 		bottom = append(bottom, m.spin.View()+" working…")
 	case m.moreBusy:
 		bottom = append(bottom, dimStyle.Render("loading more…"))
+	case m.picking != nil:
+		bottom = append(bottom, warnStyle.Render(strings.Join(m.pickerLines(), "\n")))
 	case m.status != "" && !m.composing:
 		bottom = append(bottom, warnStyle.Render(m.status))
 	}
@@ -1872,7 +1905,7 @@ func (m model) itemLines(i, w int) []string {
 
 	var lines []string
 	if i == m.cur {
-		lines = append(lines, selStyle.Width(w).Render(strings.TrimRight(fmt.Sprintf("▸ %s%s %s %s", gutter, ageLink(it, age), who, tailPlain), " ")))
+		lines = append(lines, selStyle.Width(w).Render(strings.TrimRight(fmt.Sprintf("▸ %s%s %s %s", gutter, ageLink(it, age), selStyle.Bold(true).Render(who), tailPlain), " ")))
 		for _, l := range text {
 			lines = append(lines, selStyle.Width(w).Render("  "+gutter+indent+l))
 		}

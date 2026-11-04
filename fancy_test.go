@@ -76,6 +76,9 @@ func TestFadeColourMovesAlongTheRamp(t *testing.T) {
 	first, _ := m.freshStyle("k")
 	*clock = clock.Add(freshFor - time.Millisecond)
 	last, ok := m.freshStyle("k")
+	if first.GetForeground() != theme.Fresh[0] || last.GetForeground() != theme.Fresh[len(theme.Fresh)-1] {
+		t.Errorf("fade should use the active theme's endpoints")
+	}
 	if !ok || first.GetForeground() == last.GetForeground() {
 		t.Errorf("colour should change as it fades: %v -> %v", first.GetForeground(), last.GetForeground())
 	}
