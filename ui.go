@@ -15,14 +15,8 @@ import (
 )
 
 var (
-	titleStyle   = lipgloss.NewStyle().Bold(true)
-	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	errStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	okStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	headingStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	accentStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
-	selStyle     = lipgloss.NewStyle().Bold(true).Background(lipgloss.Color("236"))
+	titleStyle, dimStyle, warnStyle, errStyle    lipgloss.Style
+	okStyle, headingStyle, accentStyle, selStyle lipgloss.Style
 )
 
 const panelGap = 4
@@ -297,9 +291,6 @@ func (m model) readingTop() bool {
 // freshFor is how long a newly inserted post stays highlighted in fancy mode.
 const freshFor = 2 * time.Second
 
-// freshRamp is the highlight's colour from bright to faded (256-colour codes).
-var freshRamp = []string{"213", "177", "141", "105", "69", "61", "60", "59", "238"}
-
 // startAnim schedules the next highlight redraw while anything is still fading.
 func (m model) startAnim() (model, tea.Cmd) {
 	if len(m.fresh) == 0 || m.animating {
@@ -319,8 +310,8 @@ func (m model) freshStyle(key string) (lipgloss.Style, bool) {
 	if age >= freshFor {
 		return lipgloss.Style{}, false
 	}
-	i := min(int(age*time.Duration(len(freshRamp))/freshFor), len(freshRamp)-1)
-	return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(freshRamp[i])), true
+	i := min(int(max(age, 0)*time.Duration(len(theme.Fresh))/freshFor), len(theme.Fresh)-1)
+	return lipgloss.NewStyle().Bold(true).Foreground(theme.Fresh[i]), true
 }
 
 // applyPending inserts the held-back posts at the top of the list. The post you

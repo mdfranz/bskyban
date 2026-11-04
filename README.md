@@ -51,6 +51,28 @@ export BSKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
 | `BSKYBAN_AUDIT` | audit log, default `~/.local/state/bskyban/audit.jsonl` |
 | `XDG_STATE_HOME` | moves the default state directory |
 | `BSKYBAN_FANCY` | `1` turns on `--fancy` for `feed` and `posts` |
+| `BSKYBAN_THEME` | TUI colour theme, default `auto`; overridden by `--theme NAME` |
+
+## Themes
+
+`review`, `feed` and `posts` accept `--theme NAME`, which overrides
+`BSKYBAN_THEME`. Run `bskyban themes` to preview every theme without logging in.
+
+- `auto` (default): terminal ANSI colours with adaptive selection and new-post highlights.
+- `dark`, `light`: fixed highlights for when terminal background detection is wrong.
+- `ansi`: only the terminal's 16 colours, with reverse video for selection.
+- `dracula`: the [Dracula dark palette](https://draculatheme.com/contribute).
+- `catppuccin`: [Catppuccin](https://github.com/catppuccin/catppuccin) Mocha on dark backgrounds and Latte on light ones.
+
+```sh
+bskyban feed --theme light
+export BSKYBAN_THEME=catppuccin
+bskyban posts --theme ansi --fancy
+```
+
+Colours adapt to the terminal's supported colour depth. `NO_COLOR=1` disables
+colours; the `▸` marker still identifies the selected row. Printed lists and other
+non-TUI commands are unaffected by `BSKYBAN_THEME`.
 
 ## TUI
 
