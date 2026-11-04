@@ -13,6 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
 // fakePDS records the write calls the UI makes.
@@ -455,7 +456,7 @@ func TestFollowingListAndPostView(t *testing.T) {
 	if m.cur != 0 || !m.inPost {
 		t.Errorf("left in post view should show the previous post: cur=%d inPost=%v", m.cur, m.inPost)
 	}
-	if v := oscRe.ReplaceAllString(m.View(), ""); !strings.Contains(v, "replying to @x.bsky.social: parent text") {
+	if v := termtext.StripLinks(m.View()); !strings.Contains(v, "replying to @x.bsky.social: parent text") {
 		t.Errorf("reply context missing:\n%s", v)
 	}
 	m = press(m, "esc")
@@ -542,7 +543,7 @@ func TestListShowsUpToThreeLinesOfEachPost(t *testing.T) {
 		Post: Post{Text: "look", Quote: "@q.bsky.social: first line\n\nsecond line\n\nthird"}})
 	if ql := m.itemLines(3, m.listWidth()); len(ql) != 4 { // header, own text, quote, separator
 		t.Errorf("a quote should be one paragraph on a line of its own, got %d lines:\n%s", len(ql), strings.Join(ql, "\n"))
-	} else if q := ansiRe.ReplaceAllString(ql[2], ""); !strings.Contains(q, "▎ @q.bsky.social: first line second line third") || strings.Contains(ql[1], "@q.bsky.social") {
+	} else if q := termtext.StripANSI(ql[2]); !strings.Contains(q, "▎ @q.bsky.social: first line second line third") || strings.Contains(ql[1], "@q.bsky.social") {
 		t.Errorf("quote should follow the post's own text on its own line: text=%q quote=%q", ql[1], q)
 	}
 	lines := m.itemLines(0, m.listWidth())
@@ -663,7 +664,7 @@ func TestLayoutUsesTheWholeWidth(t *testing.T) {
 		m.posts[p.DID] = &posts
 		var widest int
 		for _, line := range strings.Split(m.View(), "\n") {
-			widest = max(widest, visibleWidth(line))
+			widest = max(widest, termtext.VisibleWidth(line))
 		}
 		if widest > w {
 			t.Errorf("width %d: a line is %d wide", w, widest)

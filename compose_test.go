@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
 // step sends msg and, if it started an async action, feeds that action's result back.
@@ -216,7 +217,7 @@ func TestCurrentPostIsMarkedAndNotRepeatedInRecentPosts(t *testing.T) {
 	older := Post{Text: "older one", CreatedAt: "2026-11-01T01:00:00Z"}
 	pp := []Post{m.items[0].Post, older}
 	m.posts["did:friend"] = &pp
-	v := oscRe.ReplaceAllString(m.View(), "")
+	v := termtext.StripLinks(m.View())
 	if !strings.Contains(v, "▸ This post · 1 of 2") {
 		t.Errorf("current post not marked:\n%s", v)
 	}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/mdfranz/bskyban/internal/termtext"
 	"github.com/rivo/uniseg"
 )
 
@@ -259,7 +260,7 @@ func (a *app) cmdShow(ctx context.Context, args []string) error {
 	}
 	fmt.Fprintf(a.stdout, "%s (@%s)\nDID:       %s\nStatus:    %s\nCreated:   %s (%s)\nPosts:     %d\nFollowers: %d\nFollowing: %d\nAvatar:    %v\nURL:       https://bsky.app/profile/%s\n\n%s\n",
 		p.DisplayName, p.Handle, p.DID, status, p.CreatedAt, humanAge(p.Age()),
-		p.PostsCount, p.FollowersCount, p.FollowsCount, p.Avatar != "", p.Handle, linkifyIfTTY(p.Description))
+		p.PostsCount, p.FollowersCount, p.FollowsCount, p.Avatar != "", p.Handle, termtext.LinkifyIfTTY(p.Description))
 	posts, err := a.c.GetRecentPosts(ctx, p.DID, 5)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "recent posts: %v\n", err)
@@ -270,7 +271,7 @@ func (a *app) cmdShow(ctx context.Context, args []string) error {
 		fmt.Fprintln(a.stdout, "  (none)")
 	}
 	for _, post := range posts {
-		fmt.Fprintf(a.stdout, "  %s\n", linkifyIfTTY(formatPost(post, 0)))
+		fmt.Fprintf(a.stdout, "  %s\n", termtext.LinkifyIfTTY(formatPost(post, 0)))
 	}
 	return nil
 }
@@ -368,7 +369,7 @@ func (a *app) cmdPost(ctx context.Context, args []string) (err error) {
 		a.record(ev)
 	}()
 	if *dry {
-		fmt.Fprintf(a.stdout, "[dry-run] would post (%d characters):\n%s\n", uniseg.GraphemeClusterCount(text), terminalText(text))
+		fmt.Fprintf(a.stdout, "[dry-run] would post (%d characters):\n%s\n", uniseg.GraphemeClusterCount(text), termtext.Sanitize(text))
 		return nil
 	}
 	uri, err := a.c.Post(ctx, text, nil)
@@ -394,7 +395,7 @@ func (a *app) cmdDeletePost(ctx context.Context, args []string) error {
 	var failed int
 	for _, ref := range fs.Args() {
 		if err := a.deletePost(ctx, ref, *dry); err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", terminalText(ref), err)
+			fmt.Fprintf(os.Stderr, "%s: %v\n", termtext.Sanitize(ref), err)
 			failed++
 		}
 	}
@@ -405,7 +406,7 @@ func (a *app) cmdDeletePost(ctx context.Context, args []string) error {
 }
 
 func (a *app) deletePost(ctx context.Context, ref string, dry bool) (err error) {
-	ev := AuditEvent{Action: "delete-post", DID: a.c.DID, Handle: a.c.Handle, DryRun: dry, Detail: truncateWidth(terminalText(ref), 200)}
+	ev := AuditEvent{Action: "delete-post", DID: a.c.DID, Handle: a.c.Handle, DryRun: dry, Detail: truncateWidth(termtext.Sanitize(ref), 200)}
 	defer func() {
 		ev.OK = err == nil
 		if err != nil {
@@ -487,7 +488,7 @@ func (a *app) cmdLike(ctx context.Context, cmd string, args []string) error {
 	var failed int
 	for _, ref := range fs.Args() {
 		if err := a.likePost(ctx, cmd, ref, *dry); err != nil {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", terminalText(ref), err)
+			fmt.Fprintf(os.Stderr, "%s: %v\n", termtext.Sanitize(ref), err)
 			failed++
 		}
 	}
@@ -498,7 +499,7 @@ func (a *app) cmdLike(ctx context.Context, cmd string, args []string) error {
 }
 
 func (a *app) likePost(ctx context.Context, cmd, ref string, dry bool) (err error) {
-	ev := AuditEvent{Action: cmd, DID: a.c.DID, Handle: a.c.Handle, DryRun: dry, Detail: truncateWidth(terminalText(ref), 200)}
+	ev := AuditEvent{Action: cmd, DID: a.c.DID, Handle: a.c.Handle, DryRun: dry, Detail: truncateWidth(termtext.Sanitize(ref), 200)}
 	defer func() {
 		ev.OK = err == nil
 		if err != nil {
@@ -688,12 +689,12 @@ func formatPost(p Post, max int) string {
 	if t, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
 		age = humanAge(time.Since(t))
 	}
-	text := strings.Join(strings.Fields(terminalText(p.Text)), " ")
+	text := strings.Join(strings.Fields(termtext.Sanitize(p.Text)), " ")
 	if r := []rune(text); max > 0 && len(r) > max {
 		text = string(r[:max-1]) + "…"
 	}
 	if len(p.Attach) > 0 {
-		text = strings.TrimSpace(text + " " + terminalText(strings.Join(p.Attach, " ")))
+		text = strings.TrimSpace(text + " " + termtext.Sanitize(strings.Join(p.Attach, " ")))
 	}
 	if c := p.Link; c != nil { // full URL here: CLI output is copied and piped
 		card := "↗ " + c.URI
@@ -702,7 +703,7 @@ func formatPost(p Post, max int) string {
 		} else if c.Title != "" {
 			card = "↗ " + c.Title
 		}
-		text = strings.TrimSpace(text + " " + terminalText(card))
+		text = strings.TrimSpace(text + " " + termtext.Sanitize(card))
 	}
 	if text == "" {
 		text = "(no text)"

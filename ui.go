@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mdfranz/bskyban/internal/termtext"
 	"github.com/rivo/uniseg"
 )
 
@@ -1340,10 +1341,10 @@ func (m model) profilePanel(cw int, pos string) []string {
 	if name == "" {
 		name = "(no display name)"
 	}
-	lines := styleLines(wrapText(name, cw-12), headingStyle)
+	lines := styleLines(termtext.Wrap(name, cw-12), headingStyle)
 	lines[len(lines)-1] += "  " + dimStyle.Render(pos)
 	lines = append(lines, accentStyle.Render("@"+p.Handle),
-		dimStyle.Render(osc8("https://bsky.app/profile/"+p.Handle, "open profile ↗")))
+		dimStyle.Render(termtext.OSC8("https://bsky.app/profile/"+p.Handle, "open profile ↗")))
 	if b := m.decisionBadge(p.DID); b != "" {
 		lines = append(lines, b)
 	} else if p.Viewer.Following != "" {
@@ -1379,7 +1380,7 @@ func (m model) profilePanel(cw int, pos string) []string {
 	}
 	lines = append(lines, "")
 	if bio := strings.TrimSpace(p.Description); bio != "" {
-		return append(lines, wrapText(bio, cw)...)
+		return append(lines, termtext.Wrap(bio, cw)...)
 	}
 	return append(lines, dimStyle.Render("(no bio)"))
 }
@@ -1418,7 +1419,7 @@ func statsLine(it FeedItem) string {
 		likes = errStyle.Render("♥ " + count(s.Likes, "like") + " (you liked this)")
 	}
 	rest := dimStyle.Render(" · " + count(s.Reposts, "repost") + " · " + count(s.Replies, "reply") + " · " + count(s.Quotes, "quote") + " · ")
-	return likes + rest + accentStyle.Render(osc8(postLink(it), "open post ↗"))
+	return likes + rest + accentStyle.Render(termtext.OSC8(postLink(it), "open post ↗"))
 }
 
 // postLink is the post's bsky.app address, using the author's handle when known.
@@ -1495,7 +1496,7 @@ func joinColumns(left, right []string, leftW int) string {
 		if i < len(right) {
 			r = right[i]
 		}
-		b.WriteString(l + strings.Repeat(" ", max(leftW-visibleWidth(l), 0)+panelGap) + r + "\n")
+		b.WriteString(l + strings.Repeat(" ", max(leftW-termtext.VisibleWidth(l), 0)+panelGap) + r + "\n")
 	}
 	return b.String()
 }
@@ -1634,7 +1635,7 @@ func (m model) View() string {
 
 	var bottom []string
 	if m.err != nil {
-		bottom = append(bottom, errStyle.Render("error: "+terminalText(m.err.Error())))
+		bottom = append(bottom, errStyle.Render("error: "+termtext.Sanitize(m.err.Error())))
 	}
 	switch {
 	case m.busy && m.composing:
@@ -1698,8 +1699,8 @@ func (m model) content() string {
 func (m model) composeView() string {
 	var b strings.Builder
 	if r := m.replyTo; r != nil {
-		b.WriteString(headingStyle.Render("Reply to @"+terminalText(r.Author.Handle)) + "\n")
-		quote := strings.Join(strings.Fields(terminalText(r.Post.Text)), " ")
+		b.WriteString(headingStyle.Render("Reply to @"+termtext.Sanitize(r.Author.Handle)) + "\n")
+		quote := strings.Join(strings.Fields(termtext.Sanitize(r.Post.Text)), " ")
 		if w := m.width - 4; w > 10 {
 			quote = truncateWidth(quote, w)
 		}
@@ -1795,7 +1796,7 @@ func clip(text string, w, n int) []string {
 	if text == "" {
 		return nil
 	}
-	lines := strings.Split(oscRe.ReplaceAllString(strings.Join(wrapText(text, w), "\n"), ""), "\n")
+	lines := strings.Split(termtext.StripLinks(strings.Join(termtext.Wrap(text, w), "\n")), "\n")
 	if len(lines) > n {
 		lines = lines[:n]
 		lines[n-1] = truncateWidth(lines[n-1]+" …", w)
@@ -1821,7 +1822,7 @@ func ageLink(it FeedItem, age string) string {
 	if it.URI == "" {
 		return age + pad
 	}
-	return osc8(postLink(it), age) + pad
+	return termtext.OSC8(postLink(it), age) + pad
 }
 
 // ageOf is how long ago s (RFC 3339) was, or "?".
@@ -1966,7 +1967,7 @@ func renderPost(p Post, w int, full bool) []string {
 	lines := []string{dimStyle.Render(age + " ago" + kind)}
 	indent := "  "
 	body := func(text string, st *lipgloss.Style, prefix string) {
-		for _, l := range wrapText(text, w-len(indent)-len(prefix)) {
+		for _, l := range termtext.Wrap(text, w-len(indent)-len(prefix)) {
 			if st != nil {
 				l = st.Render(l)
 			}

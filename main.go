@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
 // minRefresh is the shortest allowed interval between background checks.
@@ -198,7 +200,7 @@ func envOn(name string) bool {
 }
 
 func fail(err error) int {
-	fmt.Fprintln(os.Stderr, "error:", terminalText(err.Error()))
+	fmt.Fprintln(os.Stderr, "error:", termtext.Sanitize(err.Error()))
 	if errors.Is(err, errUsage) {
 		fmt.Fprint(os.Stderr, "\n", usageText)
 		return 2

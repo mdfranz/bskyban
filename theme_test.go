@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mdfranz/bskyban/internal/termtext"
 	"github.com/muesli/termenv"
 )
 
@@ -130,7 +131,7 @@ func TestCmdThemes(t *testing.T) {
 	if err := cmdThemes(&out); err != nil {
 		t.Fatal(err)
 	}
-	plain := ansiRe.ReplaceAllString(out.String(), "")
+	plain := termtext.StripANSI(out.String())
 	for _, th := range themes {
 		if !strings.Contains(plain, th.Name+"\n") {
 			t.Errorf("preview omits %s", th.Name)

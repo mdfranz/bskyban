@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
 // stateDir is where bskyban keeps everything it writes: decisions and the audit
@@ -226,7 +228,7 @@ func runLog(args []string, out io.Writer) error {
 		if e.Detail != "" {
 			line += "  (" + e.Detail + ")"
 		}
-		fmt.Fprintln(out, terminalText(line))
+		fmt.Fprintln(out, termtext.Sanitize(line))
 	}
 	return nil
 }

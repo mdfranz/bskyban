@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
 // fancyModel is a refresh model at the top of the list with a clock the test controls.
@@ -16,7 +18,7 @@ func fancyModel(t *testing.T, s *script, fancy bool, shown ...FeedItem) (model, 
 }
 
 // view is the screen without colours, so the test can look for the plain marks.
-func view(m model) string { return ansiRe.ReplaceAllString(m.View(), "") }
+func view(m model) string { return termtext.StripANSI(m.View()) }
 
 func TestFancyOffAddsNoHighlight(t *testing.T) {
 	A := post("A", "a", "")

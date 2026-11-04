@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
 const (
@@ -48,10 +50,10 @@ func (p *Profile) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*p = Profile(decoded)
-	p.DisplayName = terminalText(p.DisplayName)
-	p.Description = terminalText(p.Description)
-	p.Handle = terminalText(p.Handle)
-	p.DID = terminalText(p.DID)
+	p.DisplayName = termtext.Sanitize(p.DisplayName)
+	p.Description = termtext.Sanitize(p.Description)
+	p.Handle = termtext.Sanitize(p.Handle)
+	p.DID = termtext.Sanitize(p.DID)
 	return nil
 }
 
@@ -112,7 +114,7 @@ func (c *Client) do(ctx context.Context, method, nsid string, query url.Values, 
 		var e struct{ Error, Message string }
 		_ = json.Unmarshal(data, &e)
 		if e.Error != "" {
-			return fmt.Errorf("%s: %s (%s)", nsid, terminalText(e.Message), terminalText(e.Error))
+			return fmt.Errorf("%s: %s (%s)", nsid, termtext.Sanitize(e.Message), termtext.Sanitize(e.Error))
 		}
 		return fmt.Errorf("%s: HTTP %d", nsid, resp.StatusCode)
 	}
@@ -271,12 +273,6 @@ func embedLink(raw json.RawMessage) *linkCard {
 	return nil
 }
 
-// Markers for media in a post: single-width, so rows line up in any terminal.
-const (
-	imageMark = "▣"
-	videoMark = "▶"
-)
-
 // describeEmbed turns a raw post embed into short one-line descriptions.
 func describeEmbed(raw json.RawMessage) []string {
 	if len(raw) == 0 || string(raw) == "null" {
@@ -298,7 +294,7 @@ func describeEmbed(raw json.RawMessage) []string {
 	var out []string
 	switch {
 	case strings.HasPrefix(e.Type, "app.bsky.embed.images"):
-		s := imageMark // "▣", or "▣×3" for several, then the first alt text
+		s := termtext.ImageMark // "▣", or "▣×3" for several, then the first alt text
 		if len(e.Images) != 1 {
 			s += fmt.Sprintf("×%d", len(e.Images))
 		}
@@ -310,7 +306,7 @@ func describeEmbed(raw json.RawMessage) []string {
 		}
 		out = append(out, s)
 	case strings.HasPrefix(e.Type, "app.bsky.embed.video"):
-		s := videoMark + " video"
+		s := termtext.VideoMark + " video"
 		if alt := strings.Join(strings.Fields(e.Alt), " "); alt != "" {
 			s += " " + alt
 		}

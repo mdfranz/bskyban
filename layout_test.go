@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
 func TestRepliesInTheSameThreadAreJoined(t *testing.T) {
@@ -31,7 +32,7 @@ func TestRepliesInTheSameThreadAreJoined(t *testing.T) {
 	plain := func(i int) []string {
 		var out []string
 		for _, l := range m.itemLines(i, m.listWidth()) {
-			out = append(out, oscRe.ReplaceAllString(ansiRe.ReplaceAllString(l, ""), ""))
+			out = append(out, termtext.StripLinks(termtext.StripANSI(l)))
 		}
 		return out
 	}
@@ -61,7 +62,7 @@ func TestRepostShowsWhenItWasReposted(t *testing.T) {
 		RepostedAt: now.Add(-time.Minute).Format(time.RFC3339),
 		Post:       Post{Text: "poem", CreatedAt: now.Add(-8 * time.Minute).Format(time.RFC3339)}}}
 	m.cur = 1 // not selected, so the plain row is checked
-	h := oscRe.ReplaceAllString(ansiRe.ReplaceAllString(m.itemLines(0, m.listWidth())[0], ""), "")
+	h := termtext.StripLinks(termtext.StripANSI(m.itemLines(0, m.listWidth())[0]))
 	if !strings.HasPrefix(strings.TrimSpace(h), "1m") || !strings.Contains(h, "↻ reposted by @egg.bsky.social · written 8m ago") {
 		t.Errorf("row should be aged by the repost and say when it was posted: %q", h)
 	}
@@ -78,7 +79,7 @@ func TestPostTextLinesUpWithTheAuthorName(t *testing.T) {
 		lines := m.itemLines(0, m.listWidth())
 		var plain []string
 		for _, l := range lines {
-			plain = append(plain, ansiRe.ReplaceAllString(l, ""))
+			plain = append(plain, termtext.StripANSI(l))
 		}
 		col := func(s, sub string) int { return lipgloss.Width(s[:strings.Index(s, sub)]) } // display column
 		name := col(plain[0], "Alpha")
@@ -109,7 +110,7 @@ func TestPostViewShowsEngagementAndLink(t *testing.T) {
 	m, f := feedWithTimeline(t)
 	m.items = []FeedItem{it}
 	m = press(m, "enter")
-	v := oscRe.ReplaceAllString(ansiRe.ReplaceAllString(m.View(), ""), "")
+	v := termtext.StripLinks(termtext.StripANSI(m.View()))
 	if !strings.Contains(v, "120 likes · 1 repost · 18 replies · 0 quotes · open post ↗") {
 		t.Errorf("stats line missing:\n%s", v)
 	}
@@ -121,7 +122,7 @@ func TestPostViewShowsEngagementAndLink(t *testing.T) {
 	if f.joined() != "like" || m.items[0].Stats.Likes != 121 {
 		t.Fatalf("liking should count you: calls=%q likes=%d", f.joined(), m.items[0].Stats.Likes)
 	}
-	if v := ansiRe.ReplaceAllString(m.View(), ""); !strings.Contains(v, "♥ 121 likes (you liked this)") {
+	if v := termtext.StripANSI(m.View()); !strings.Contains(v, "♥ 121 likes (you liked this)") {
 		t.Errorf("liked stats missing:\n%s", v)
 	}
 	m = step(m, key("h"))
@@ -161,13 +162,13 @@ func TestLinkCards(t *testing.T) {
 		t.Errorf("preview should keep URLs whole: %q", got)
 	}
 	full := strings.Join(renderPost(p, 200, true), "\n")
-	if plain := ansiRe.ReplaceAllString(oscRe.ReplaceAllString(full, ""), ""); !strings.Contains(plain, "↗ The Limits of Trump's Midterm Trickery https://bit.ly/3V270SA") || strings.Contains(plain, "[link]") {
+	if plain := termtext.StripANSI(termtext.StripLinks(full)); !strings.Contains(plain, "↗ The Limits of Trump's Midterm Trickery https://bit.ly/3V270SA") || strings.Contains(plain, "[link]") {
 		t.Errorf("post view card should show its URL:\n%s", plain)
 	}
 }
 
 func TestLinkArrowStaysWithItsTitle(t *testing.T) {
-	lines := wrapText("aaaa bbbb ↗ Title here", 10)
+	lines := termtext.Wrap("aaaa bbbb ↗ Title here", 10)
 	for _, l := range lines {
 		if strings.HasSuffix(l, "↗") {
 			t.Fatalf("arrow stranded at a line end: %q", lines)
@@ -187,7 +188,7 @@ func TestHintsArePinnedToTheBottomRow(t *testing.T) {
 		if len(rows) != m.height {
 			t.Errorf("%s: view has %d rows, want the window's %d", name, len(rows), m.height)
 		}
-		last := ansiRe.ReplaceAllString(rows[len(rows)-1], "")
+		last := termtext.StripANSI(rows[len(rows)-1])
 		if !strings.Contains(last, "q quit") && !strings.Contains(last, "esc cancel") {
 			t.Errorf("%s: last row should be the key hints, got %q", name, last)
 		}
@@ -220,10 +221,10 @@ func TestReplyNamesWhoItAnswers(t *testing.T) {
 		{URI: "at://b", Author: Profile{DID: "did:x", Handle: "x.bsky.social"}, Post: Post{Text: "?", Reply: true}},
 	}
 	m.cur = 5
-	if h := ansiRe.ReplaceAllString(m.itemLines(0, m.listWidth())[0], ""); !strings.Contains(h, "↳ replying to @drjanicekirsch.bsky.social") {
+	if h := termtext.StripANSI(m.itemLines(0, m.listWidth())[0]); !strings.Contains(h, "↳ replying to @drjanicekirsch.bsky.social") {
 		t.Errorf("header = %q", h)
 	}
-	if h := ansiRe.ReplaceAllString(m.itemLines(1, m.listWidth())[0], ""); !strings.HasSuffix(h, " reply") {
+	if h := termtext.StripANSI(m.itemLines(1, m.listWidth())[0]); !strings.HasSuffix(h, " reply") {
 		t.Errorf("without a known parent it still says reply: %q", h)
 	}
 }
@@ -262,9 +263,9 @@ func TestMediaMarkers(t *testing.T) {
 		}
 	}
 	for _, text := range []string{"aaaa bbbb ▣×3 county map", "aaaa bbbb ▶ video clip"} {
-		for _, l := range wrapText(text, 10) {
+		for _, l := range termtext.Wrap(text, 10) {
 			if strings.HasSuffix(l, "▣×3") || strings.HasSuffix(l, "▶") {
-				t.Errorf("marker stranded at a line end: %q", wrapText(text, 10))
+				t.Errorf("marker stranded at a line end: %q", termtext.Wrap(text, 10))
 			}
 		}
 	}

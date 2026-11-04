@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
 // pickLink is one link the picker (o) offers for the selected post.
@@ -45,8 +46,7 @@ func postLinks(it FeedItem) []pickLink {
 		}
 		add("↗ "+label, c.URI, true)
 	}
-	for _, u := range httpRe.FindAllString(p.Text, -1) {
-		u = strings.TrimRight(u, urlTrailing)
+	for _, u := range termtext.FindURLs(p.Text) {
 		add(strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://"), u, true)
 	}
 	if p.QuoteURI != "" {
@@ -125,7 +125,7 @@ func defaultPick(links []pickLink) int {
 func (m model) pickerLines() []string {
 	items := make([]string, len(m.picking))
 	for i, l := range m.picking {
-		items[i] = fmt.Sprintf("%d %s", i+1, truncateWidth(terminalText(l.label), 40))
+		items[i] = fmt.Sprintf("%d %s", i+1, truncateWidth(termtext.Sanitize(l.label), 40))
 	}
 	return wrapItems(append([]string{"open:"}, items...), m.width)
 }

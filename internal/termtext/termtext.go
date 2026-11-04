@@ -1,4 +1,7 @@
-package main
+// Package termtext makes untrusted text safe and readable in a terminal: it strips
+// control sequences, turns URLs and @mentions into OSC 8 hyperlinks, and word-wraps
+// without breaking links.
+package termtext
 
 import (
 	"os"
@@ -10,9 +13,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// terminalText removes controls supplied by remote content. Call before adding
+// Sanitize removes controls supplied by remote content. Call before adding
 // our own ANSI styling and OSC hyperlinks, never on already-rendered output.
-func terminalText(s string) string {
+func Sanitize(s string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) && r != '\n' && r != '\t' {
 			return -1
@@ -20,6 +23,12 @@ func terminalText(s string) string {
 		return r
 	}, ansi.Strip(s))
 }
+
+// Markers for media in a post: single-width, so rows line up in any terminal.
+const (
+	ImageMark = "▣"
+	VideoMark = "▶"
+)
 
 // Matches http(s) URLs and bare domains with a common TLD. Stops at whitespace
 // and ESC so it can run over already-styled (ANSI) text.
@@ -53,13 +62,13 @@ func linkifyText(s string) string {
 	return linkRe.ReplaceAllStringFunc(s, func(m string) string {
 		url := strings.TrimRight(m, ".,;:!?)]}\"'")
 		tail := m[len(url):]
-		return osc8(urlTarget(url), url) + tail
+		return OSC8(urlTarget(url), url) + tail
 	})
 }
 
-// linkifyIfTTY only adds escape codes when stdout is a terminal.
-func linkifyIfTTY(s string) string {
-	s = terminalText(s)
+// LinkifyIfTTY only adds escape codes when stdout is a terminal.
+func LinkifyIfTTY(s string) string {
+	s = Sanitize(s)
 	if fi, err := os.Stdout.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
 		return linkify(s)
 	}
@@ -69,7 +78,7 @@ func linkifyIfTTY(s string) string {
 // httpRe matches http(s) URLs in plain text.
 var httpRe = regexp.MustCompile(`https?://[^\s\x1b]+`)
 
-func osc8(target, text string) string {
+func OSC8(target, text string) string {
 	return "\x1b]8;;" + target + "\x1b\\" + text + "\x1b]8;;\x1b\\"
 }
 
@@ -77,8 +86,8 @@ const urlTrailing = ".,;:!?)]}\"'"
 
 var oscRe = regexp.MustCompile(`\x1b\][^\x1b]*\x1b\\`)
 
-// visibleWidth is the on-screen width of s, ignoring hyperlink escapes.
-func visibleWidth(s string) int { return lipgloss.Width(oscRe.ReplaceAllString(s, "")) }
+// VisibleWidth is the on-screen width of s, ignoring hyperlink escapes.
+func VisibleWidth(s string) int { return lipgloss.Width(oscRe.ReplaceAllString(s, "")) }
 
 type piece struct{ text, target string }
 
@@ -117,8 +126,8 @@ func splitWord(word string) []piece {
 // stranded at the end of a line.
 func gluePrefixes(words []string) []string {
 	isMark := func(w string) bool {
-		return w == "↗" || w == videoMark || w == imageMark ||
-			(strings.HasPrefix(w, imageMark+"×") && strings.Trim(w[len(imageMark+"×"):], "0123456789") == "")
+		return w == "↗" || w == VideoMark || w == ImageMark ||
+			(strings.HasPrefix(w, ImageMark+"×") && strings.Trim(w[len(ImageMark+"×"):], "0123456789") == "")
 	}
 	out := words[:0:0]
 	for i := 0; i < len(words); i++ {
@@ -132,11 +141,11 @@ func gluePrefixes(words []string) []string {
 	return out
 }
 
-// wrapText word-wraps text to width columns. URLs are never shortened: one too
+// Wrap word-wraps text to width columns. URLs are never shortened: one too
 // long for a line is split across lines, and every fragment is a hyperlink to
 // the full URL. Newlines in text are kept.
-func wrapText(text string, width int) []string {
-	text = terminalText(text)
+func Wrap(text string, width int) []string {
+	text = Sanitize(text)
 	width = max(width, 8)
 	var lines []string
 	for _, para := range strings.Split(text, "\n") {
@@ -185,7 +194,7 @@ func wrapText(text string, width int) []string {
 					}
 					frag := string(rs[i:j])
 					if p.target != "" {
-						frag = osc8(p.target, frag)
+						frag = OSC8(p.target, frag)
 					}
 					cur.WriteString(frag)
 					curW += w
@@ -197,3 +206,18 @@ func wrapText(text string, width int) []string {
 	}
 	return lines
 }
+
+// FindURLs returns the http(s) URLs in plain text, without trailing punctuation.
+func FindURLs(s string) []string {
+	urls := httpRe.FindAllString(s, -1)
+	for i, u := range urls {
+		urls[i] = strings.TrimRight(u, urlTrailing)
+	}
+	return urls
+}
+
+// StripANSI removes styling escape sequences (SGR and other CSI codes).
+func StripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
+
+// StripLinks removes OSC 8 hyperlink escapes, leaving the link text.
+func StripLinks(s string) string { return oscRe.ReplaceAllString(s, "") }

@@ -3,6 +3,8 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
 func pickerItem() FeedItem {
@@ -55,7 +57,7 @@ func TestPickerOpensTheChosenLink(t *testing.T) {
 	if len(m.picking) != 6 {
 		t.Fatalf("picking = %d links", len(m.picking))
 	}
-	v := ansiRe.ReplaceAllString(m.View(), "")
+	v := termtext.StripANSI(m.View())
 	for _, w := range []string{"open:", "1 post on bsky.app", "2 ↗ Georgia results", "6 @nbcnews.com's profile", "1-6 open"} {
 		if !strings.Contains(v, w) {
 			t.Errorf("picker footer missing %q:\n%s", w, v)
