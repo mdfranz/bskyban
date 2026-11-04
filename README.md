@@ -33,7 +33,7 @@ people and has 5 followers, with templated replies.
 
 ## Install
 
-Requires Go 1.26+ (see `go.mod`).
+Requires Go 1.26.10 or newer (see `go.mod`).
 
 ```sh
 git clone https://github.com/mdfranz/bskyban
