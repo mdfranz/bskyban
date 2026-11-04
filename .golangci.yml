@@ -1,0 +1,20 @@
+version: "2"
+linters:
+  enable:
+    - ineffassign
+    - staticcheck
+    - unused
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Sscanf
+        - (*os.File).Close
+        - (io.Closer).Close
+        - (*net/http.Response).Body.Close
+        - (*os/exec.Cmd).Wait
+formatters:
+  enable:
+    - gofmt

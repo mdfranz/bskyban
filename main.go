@@ -91,7 +91,8 @@ func realMain() int {
 	}
 	a := &app{c: c, st: st, audit: NewAudit(auditPath), stdin: os.Stdin, stdout: os.Stdout}
 
-	if cmd == "feed" {
+	switch cmd {
+	case "feed":
 		if opts.list {
 			err = a.cmdFeedList(ctx, opts.pages, opts.backlog, opts.asJSON)
 		} else {
@@ -107,7 +108,7 @@ func realMain() int {
 			fm.fancy = opts.fancy || envOn("BSKYBAN_FANCY")
 			err = runTUI(fm)
 		}
-	} else if cmd == "posts" {
+	case "posts":
 		if opts.list || opts.asJSON {
 			err = a.cmdPostsList(ctx, opts.n, opts.asJSON)
 		} else {
@@ -119,13 +120,13 @@ func realMain() int {
 			pm.fancy = opts.fancy || envOn("BSKYBAN_FANCY")
 			err = runTUI(pm)
 		}
-	} else if cmd == "review" {
+	case "review":
 		applyTheme(opts.theme)
 		err = runTUI(newModel(a, "review", func(ctx context.Context) ([]Profile, map[string]repostCtx, error) {
 			l, err := a.followers(ctx, opts.since, false, opts.backlog)
 			return l, nil, err
 		}))
-	} else {
+	default:
 		err = a.run(ctx, cmd, args)
 	}
 	if err != nil {
@@ -173,7 +174,7 @@ func parseTUIOptions(cmd string, args []string) (tuiOptions, error) {
 		return opts, fmt.Errorf("%w: --refresh must be 0 (off) or at least %s", errUsage, minRefresh)
 	}
 	// Printed lists do not use themes, including the environment default.
-	if !opts.list && !(cmd == "posts" && opts.asJSON) {
+	if !opts.list && (cmd != "posts" || !opts.asJSON) {
 		var err error
 		opts.theme, err = resolveTheme(*name, os.Getenv("BSKYBAN_THEME"))
 		if err != nil {
