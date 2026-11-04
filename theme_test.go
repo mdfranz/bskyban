@@ -45,7 +45,7 @@ func TestThemesComplete(t *testing.T) {
 			}
 		}
 		applyTheme(th)
-		if !selStyle.GetBold() || (th.SelBG == nil && !selStyle.GetReverse()) {
+		if selStyle.GetBold() || (th.SelBG == nil && !selStyle.GetReverse()) {
 			t.Errorf("%s has no selection styling", th.Name)
 		}
 		if got, err := themeByName(strings.ToUpper(th.Name)); err != nil || got.Name != th.Name {

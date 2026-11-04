@@ -1905,7 +1905,7 @@ func (m model) itemLines(i, w int) []string {
 
 	var lines []string
 	if i == m.cur {
-		lines = append(lines, selStyle.Width(w).Render(strings.TrimRight(fmt.Sprintf("▸ %s%s %s %s", gutter, ageLink(it, age), who, tailPlain), " ")))
+		lines = append(lines, selStyle.Width(w).Render(strings.TrimRight(fmt.Sprintf("▸ %s%s %s %s", gutter, ageLink(it, age), selStyle.Bold(true).Render(who), tailPlain), " ")))
 		for _, l := range text {
 			lines = append(lines, selStyle.Width(w).Render("  "+gutter+indent+l))
 		}

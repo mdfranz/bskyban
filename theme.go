@@ -121,7 +121,7 @@ func applyTheme(t Theme) {
 	okStyle = base.Foreground(t.OK)
 	headingStyle = base.Bold(true).Foreground(t.Heading)
 	accentStyle = base.Foreground(t.Accent)
-	selStyle = base.Bold(true)
+	selStyle = base
 	if t.SelBG == nil {
 		selStyle = selStyle.Reverse(true)
 	} else {
