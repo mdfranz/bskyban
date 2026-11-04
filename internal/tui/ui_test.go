@@ -1,103 +1,19 @@
-package main
+package tui
 
 import (
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"regexp"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mdfranz/bskyban/internal/app"
 	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/store"
 	"github.com/mdfranz/bskyban/internal/termtext"
+	"github.com/mdfranz/bskyban/internal/testpds"
 )
-
-// fakePDS records the write calls the UI makes.
-type fakePDS struct {
-	mu      sync.Mutex
-	calls   []string
-	deleted []string
-}
-
-func (f *fakePDS) log(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
-
-func (f *fakePDS) joined() string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return strings.Join(f.calls, ",")
-}
-
-func newTestApp(t *testing.T) (*cliApp, *fakePDS) {
-	t.Helper()
-	f := &fakePDS{}
-	n := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/xrpc/com.atproto.repo.createRecord":
-			var body struct{ Collection string }
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			n++
-			kind := "block"
-			if strings.HasSuffix(body.Collection, ".follow") {
-				kind = "follow"
-			} else if strings.HasSuffix(body.Collection, ".post") {
-				kind = "post"
-			} else if strings.HasSuffix(body.Collection, ".like") {
-				kind = "like"
-			}
-			f.log(kind)
-			fmt.Fprintf(w, `{"uri":"at://did:me/%s/rk%d"}`, body.Collection, n)
-		case "/xrpc/com.atproto.repo.deleteRecord":
-			var body struct {
-				Collection string `json:"collection"`
-				RKey       string `json:"rkey"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			f.mu.Lock()
-			f.deleted = append(f.deleted, body.RKey)
-			f.mu.Unlock()
-			if strings.HasSuffix(body.Collection, ".follow") {
-				f.log("unfollow")
-			} else if strings.HasSuffix(body.Collection, ".post") {
-				f.log("delete-post")
-			} else if strings.HasSuffix(body.Collection, ".like") {
-				f.log("unlike")
-			} else {
-				f.log("unblock")
-			}
-			fmt.Fprint(w, `{}`)
-		case "/xrpc/app.bsky.actor.getProfile":
-			switch r.URL.Query().Get("actor") {
-			case "friend": // someone you follow
-				fmt.Fprint(w, `{"did":"did:friend","handle":"friend","viewer":{"following":"at://did:me/app.bsky.graph.follow/rkf"}}`)
-			case "newbie": // a stranger
-				fmt.Fprint(w, `{"did":"did:newbie","handle":"newbie","viewer":{}}`)
-			default: // "x": already blocked
-				fmt.Fprint(w, `{"did":"x","handle":"x","viewer":{"blocking":"at://did:me/app.bsky.graph.block/rk0"}}`)
-			}
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	c := bsky.NewClient(srv.URL)
-	c.DID = "did:me"
-	st, err := store.LoadState(t.TempDir() + "/state.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &cliApp{App: &app.App{Client: c, State: st, Audit: store.NewAudit(t.TempDir() + "/audit.jsonl")}}, f
-}
 
 func key(s string) tea.KeyMsg {
 	switch s {
@@ -138,9 +54,9 @@ func press(m model, k string) model {
 	return m
 }
 
-func candidates(t *testing.T) (model, *fakePDS) {
-	a, f := newTestApp(t)
-	m := newModel(a.App, "review", nil)
+func candidates(t *testing.T) (model, *testpds.PDS) {
+	a, f := testpds.New(t)
+	m := newModel(a, "review", nil)
 	m.loading = false
 	m.width, m.height = 120, 40
 	for _, h := range []string{"a", "b", "c"} {
@@ -210,8 +126,8 @@ func TestArrowNavigationDoesNotDecide(t *testing.T) {
 	if m.idx != 0 {
 		t.Fatalf("home -> idx = %d", m.idx)
 	}
-	if len(m.a.State.Entries) != 0 || f.joined() != "" {
-		t.Errorf("navigation recorded something: %v / %s", m.a.State.Entries, f.joined())
+	if len(m.a.State.Entries) != 0 || f.Joined() != "" {
+		t.Errorf("navigation recorded something: %v / %s", m.a.State.Entries, f.Joined())
 	}
 }
 
@@ -262,22 +178,22 @@ func TestRevisitShowsDecisionAndLettersOverride(t *testing.T) {
 		t.Error("revisited follower should show its blocked badge")
 	}
 	m = press(m, "b")
-	if !strings.Contains(m.status, "already blocked") || f.joined() != "block" {
-		t.Errorf("repeat block should be a no-op, status=%q calls=%s", m.status, f.joined())
+	if !strings.Contains(m.status, "already blocked") || f.Joined() != "block" {
+		t.Errorf("repeat block should be a no-op, status=%q calls=%s", m.status, f.Joined())
 	}
 	m = press(m, "k") // override: keep lifts the block
 	if got := m.a.State.Entries["did:a"].Decision; got != store.Kept {
 		t.Errorf("decision = %q, want kept", got)
 	}
-	if f.joined() != "block,unblock" {
-		t.Errorf("calls = %s, want block,unblock", f.joined())
+	if f.Joined() != "block,unblock" {
+		t.Errorf("calls = %s, want block,unblock", f.Joined())
 	}
 	m = press(m, "u") // undo the keep: the earlier block is restored
 	if got := m.a.State.Entries["did:a"].Decision; got != store.Blocked {
 		t.Errorf("after undo decision = %q, want blocked", got)
 	}
-	if f.joined() != "block,unblock,block" {
-		t.Errorf("calls = %s, want the block re-created", f.joined())
+	if f.Joined() != "block,unblock,block" {
+		t.Errorf("calls = %s, want the block re-created", f.Joined())
 	}
 }
 
@@ -288,8 +204,8 @@ func TestUndoBlockRemovesBlock(t *testing.T) {
 	if _, ok := m.a.State.Entries["did:a"]; ok {
 		t.Error("undo should clear the decision")
 	}
-	if m.idx != 0 || f.joined() != "block,unblock" {
-		t.Errorf("idx=%d calls=%s", m.idx, f.joined())
+	if m.idx != 0 || f.Joined() != "block,unblock" {
+		t.Errorf("idx=%d calls=%s", m.idx, f.Joined())
 	}
 }
 
@@ -300,9 +216,7 @@ func TestUndoRestoredBlockDeletesCurrentRecord(t *testing.T) {
 	m = press(m, "k")
 	m = press(m, "u")
 	m = press(m, "u")
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if got := strings.Join(f.deleted, ","); got != "rk1,rk2" {
+	if got := strings.Join(f.DeletedKeys(), ","); got != "rk1,rk2" {
 		t.Fatalf("deleted records = %s, want rk1,rk2", got)
 	}
 	if _, ok := m.a.State.Entries["did:a"]; ok {
@@ -333,7 +247,7 @@ func TestQuitWaitsForActionPersistenceAndAudit(t *testing.T) {
 			if err != nil || st.Entries["did:a"].Decision != store.Blocked {
 				t.Fatalf("decision not persisted: state=%+v err=%v", st, err)
 			}
-			if got := strings.Join(actions(t, m.a), ","); got != "block" || f.joined() != "block" {
+			if got := strings.Join(testpds.Actions(t, m.a), ","); got != "block" || f.Joined() != "block" {
 				t.Fatalf("action not audited: %s", got)
 			}
 		})
@@ -354,7 +268,7 @@ func TestDeferredQuitShowsActionFailure(t *testing.T) {
 	if cmd != nil || m.quitting || m.busy || m.err == nil {
 		t.Fatal("failed action should stay open and show the error")
 	}
-	if len(m.a.State.Entries) != 0 || strings.Join(actions(t, m.a), ",") != "block!" {
+	if len(m.a.State.Entries) != 0 || strings.Join(testpds.Actions(t, m.a), ",") != "block!" {
 		t.Fatal("failed action should only produce a failure audit")
 	}
 }
@@ -395,7 +309,7 @@ func TestFailedSaveRetriesWithoutRepeatingRemoteAction(t *testing.T) {
 			if last.OK || !strings.Contains(last.Detail, "local persistence failed") {
 				t.Fatalf("failed save audit = %+v", last)
 			}
-			calls := f.joined()
+			calls := f.Joined()
 			m = press(m, "b") // no duplicate remote action while save is pending
 			next, exit := m.Update(key("q"))
 			m = next.(model)
@@ -404,8 +318,8 @@ func TestFailedSaveRetriesWithoutRepeatingRemoteAction(t *testing.T) {
 			}
 			m.a.State = good
 			m = press(m, "r")
-			if m.pending != nil || m.err != nil || f.joined() != calls {
-				t.Fatalf("retry repeated action or failed: calls=%s err=%v", f.joined(), m.err)
+			if m.pending != nil || m.err != nil || f.Joined() != calls {
+				t.Fatalf("retry repeated action or failed: calls=%s err=%v", f.Joined(), m.err)
 			}
 			st, err := store.LoadState(good.Path())
 			if err != nil {
@@ -422,9 +336,9 @@ func TestFailedSaveRetriesWithoutRepeatingRemoteAction(t *testing.T) {
 	}
 }
 
-func followingModel(t *testing.T) (model, *fakePDS) {
-	a, f := newTestApp(t)
-	m := newFeedModel(a.App, nil, nil)
+func followingModel(t *testing.T) (model, *testpds.PDS) {
+	a, f := testpds.New(t)
+	m := newFeedModel(a, nil, nil)
 	m.loading, m.followLoading = false, false
 	m.width, m.height = 120, 40
 	m.items = []bsky.FeedItem{
@@ -476,18 +390,18 @@ func TestFollowingListAndPostView(t *testing.T) {
 func TestBlockingSomeoneYouFollowNeedsConfirmation(t *testing.T) {
 	m, f := followingModel(t)
 	m = press(m, "b") // friend, whom we follow
-	if f.joined() != "" || !strings.Contains(m.status, "Press b again") {
-		t.Fatalf("first b should only ask: status=%q calls=%s", m.status, f.joined())
+	if f.Joined() != "" || !strings.Contains(m.status, "Press b again") {
+		t.Fatalf("first b should only ask: status=%q calls=%s", m.status, f.Joined())
 	}
 	m = press(m, "down") // anything else cancels the confirmation
 	m = press(m, "up")
 	m = press(m, "b")
-	if f.joined() != "" {
+	if f.Joined() != "" {
 		t.Fatal("confirmation should not survive another key")
 	}
 	m = press(m, "b")
-	if f.joined() != "block" || m.a.State.Entries["did:friend"].Decision != store.Blocked {
-		t.Errorf("second b should block: calls=%s entries=%v", f.joined(), m.a.State.Entries)
+	if f.Joined() != "block" || m.a.State.Entries["did:friend"].Decision != store.Blocked {
+		t.Errorf("second b should block: calls=%s entries=%v", f.Joined(), m.a.State.Entries)
 	}
 	if m.cur != 0 {
 		t.Errorf("timeline cursor should stay put, cur=%d", m.cur)
@@ -498,8 +412,8 @@ func TestBlockStrangerInTimelineAndTabSwitch(t *testing.T) {
 	m, f := followingModel(t)
 	m = press(m, "down")
 	m = press(m, "b") // rando: not followed, no confirmation
-	if f.joined() != "block" {
-		t.Fatalf("calls = %s", f.joined())
+	if f.Joined() != "block" {
+		t.Fatalf("calls = %s", f.Joined())
 	}
 	if v := m.View(); !strings.Contains(v, "blocked") {
 		t.Error("list should flag the blocked author")

@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"errors"
@@ -115,8 +115,8 @@ func TestPostViewShowsEngagementAndLink(t *testing.T) {
 	}
 
 	m = step(m, key("h"))
-	if f.joined() != "like" || m.items[0].Stats.Likes != 121 {
-		t.Fatalf("liking should count you: calls=%q likes=%d", f.joined(), m.items[0].Stats.Likes)
+	if f.Joined() != "like" || m.items[0].Stats.Likes != 121 {
+		t.Fatalf("liking should count you: calls=%q likes=%d", f.Joined(), m.items[0].Stats.Likes)
 	}
 	if v := termtext.StripANSI(m.View()); !strings.Contains(v, "♥ 121 likes (you liked this)") {
 		t.Errorf("liked stats missing:\n%s", v)

@@ -5,7 +5,7 @@ BIN := bskyban
 all: fmt vet build ## format, vet, build
 
 build: ## build ./bskyban
-	go build -o $(BIN) .
+	go build -o $(BIN) ./cmd/bskyban
 
 run: build ## launch the TUI (ARGS="--since 10")
 	./$(BIN) review $(ARGS)
@@ -14,19 +14,19 @@ test: ## run tests
 	go test ./...
 
 smoke: ## live read-only CLI check against your account (needs BSKY_HANDLE/BSKY_APP_PASSWORD)
-	./smoke.sh
+	./scripts/smoke.sh
 
 vet: ## go vet
 	go vet ./...
 
 fmt: ## gofmt all files
-	gofmt -w *.go
+	gofmt -w .
 
 tidy: ## go mod tidy
 	go mod tidy
 
 install: ## install to $GOBIN / $GOPATH/bin
-	go install .
+	go install ./cmd/bskyban
 
 clean: ## remove built binary
 	rm -f $(BIN)

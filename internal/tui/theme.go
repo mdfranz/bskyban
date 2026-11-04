@@ -1,6 +1,7 @@
-package main
+package tui
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -90,7 +91,11 @@ func (t Theme) adaptive() bool {
 
 func init() { applyTheme(themes[0]) }
 
-func themeByName(name string) (Theme, error) {
+// ErrUnknownTheme is returned (wrapped) for a theme name that does not exist.
+var ErrUnknownTheme = errors.New("unknown theme")
+
+// ThemeByName finds a theme by name, ignoring case.
+func ThemeByName(name string) (Theme, error) {
 	names := make([]string, len(themes))
 	for i, t := range themes {
 		if strings.EqualFold(name, t.Name) {
@@ -98,17 +103,18 @@ func themeByName(name string) (Theme, error) {
 		}
 		names[i] = t.Name
 	}
-	return Theme{}, fmt.Errorf("%w: unknown theme %q (choose from: %s)", errUsage, name, strings.Join(names, ", "))
+	return Theme{}, fmt.Errorf("%w %q (choose from: %s)", ErrUnknownTheme, name, strings.Join(names, ", "))
 }
 
-func resolveTheme(flag, env string) (Theme, error) {
+// ResolveTheme picks the theme from the --theme flag, else the environment, else auto.
+func ResolveTheme(flag, env string) (Theme, error) {
 	if flag != "" {
-		return themeByName(flag)
+		return ThemeByName(flag)
 	}
 	if env != "" {
-		return themeByName(env)
+		return ThemeByName(env)
 	}
-	return themeByName("auto")
+	return ThemeByName("auto")
 }
 
 func applyTheme(t Theme) {
@@ -129,8 +135,9 @@ func applyTheme(t Theme) {
 	}
 }
 
-// cmdThemes needs no credentials and leaves the active theme unchanged.
-func cmdThemes(w io.Writer) error {
+// PrintThemes needs no credentials and leaves the active theme unchanged.
+// PrintThemes previews every theme on w.
+func PrintThemes(w io.Writer) error {
 	previous := theme
 	defer applyTheme(previous)
 	for _, t := range themes {

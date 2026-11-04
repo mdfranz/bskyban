@@ -11,8 +11,10 @@ import (
 
 	"github.com/mdfranz/bskyban/internal/app"
 	"github.com/mdfranz/bskyban/internal/bsky"
+	"github.com/mdfranz/bskyban/internal/cli"
 	"github.com/mdfranz/bskyban/internal/store"
 	"github.com/mdfranz/bskyban/internal/termtext"
+	"github.com/mdfranz/bskyban/internal/tui"
 )
 
 // minRefresh is the shortest allowed interval between background checks.
@@ -29,25 +31,25 @@ func realMain() int {
 		cmd, args = args[0], args[1:]
 	}
 	if cmd == "help" || (len(args) > 0 && (args[0] == "-h" || args[0] == "--help")) {
-		fmt.Print(usageText)
+		fmt.Print(cli.UsageText)
 		return 0
 	}
 	if cmd == "-h" || cmd == "--help" {
-		fmt.Print(usageText)
+		fmt.Print(cli.UsageText)
 		return 0
 	}
 
 	if cmd == "log" {
-		if err := runLog(args, os.Stdout); err != nil {
+		if err := cli.RunLog(args, os.Stdout); err != nil {
 			return fail(err)
 		}
 		return 0
 	}
 	if cmd == "themes" {
 		if len(args) != 0 {
-			return fail(fmt.Errorf("%w: themes takes no arguments", errUsage))
+			return fail(fmt.Errorf("%w: themes takes no arguments", cli.ErrUsage))
 		}
-		if err := cmdThemes(os.Stdout); err != nil {
+		if err := tui.PrintThemes(os.Stdout); err != nil {
 			return fail(err)
 		}
 		return 0
@@ -94,45 +96,26 @@ func realMain() int {
 	if err := c.Login(ctx, handle, pw); err != nil {
 		return fail(fmt.Errorf("login: %w", err))
 	}
-	a := &cliApp{App: &app.App{Client: c, State: st, Audit: store.NewAudit(auditPath)}, stdin: os.Stdin, stdout: os.Stdout}
+	a := &app.App{Client: c, State: st, Audit: store.NewAudit(auditPath)}
+	topts := tui.Options{Theme: opts.theme, Refresh: opts.refresh, Fancy: opts.fancy || envOn("BSKYBAN_FANCY"), Backlog: opts.backlog}
 
 	switch cmd {
 	case "feed":
 		if opts.list {
-			err = a.cmdFeedList(ctx, opts.pages, opts.backlog, opts.asJSON)
+			err = cli.New(a, os.Stdin, os.Stdout).FeedList(ctx, opts.pages, opts.backlog, opts.asJSON)
 		} else {
-			applyTheme(opts.theme)
-			fm := newFeedModel(a.App,
-				func(ctx context.Context) ([]bsky.Profile, map[string]app.RepostCtx, error) {
-					return a.FeedCandidates(ctx, opts.pages, opts.backlog)
-				},
-				func(ctx context.Context, cursor string) ([]bsky.FeedItem, string, error) {
-					return a.Client.GetTimeline(ctx, cursor, 50)
-				})
-			fm.refresh, fm.backlog = opts.refresh, opts.backlog
-			fm.fancy = opts.fancy || envOn("BSKYBAN_FANCY")
-			err = runTUI(fm)
+			err = tui.RunFeed(a, opts.pages, topts)
 		}
 	case "posts":
 		if opts.list || opts.asJSON {
-			err = a.cmdPostsList(ctx, opts.n, opts.asJSON)
+			err = cli.New(a, os.Stdin, os.Stdout).PostsList(ctx, opts.n, opts.asJSON)
 		} else {
-			applyTheme(opts.theme)
-			pm := newPostsModel(a.App, func(ctx context.Context, cursor string) ([]bsky.FeedItem, string, error) {
-				return a.Client.GetOwnPosts(ctx, cursor, 50)
-			})
-			pm.refresh = opts.refresh
-			pm.fancy = opts.fancy || envOn("BSKYBAN_FANCY")
-			err = runTUI(pm)
+			err = tui.RunPosts(a, topts)
 		}
 	case "review":
-		applyTheme(opts.theme)
-		err = runTUI(newModel(a.App, "review", func(ctx context.Context) ([]bsky.Profile, map[string]app.RepostCtx, error) {
-			l, err := a.Followers(ctx, opts.since, false, opts.backlog)
-			return l, nil, err
-		}))
+		err = tui.RunReview(a, opts.since, topts)
 	default:
-		err = a.run(ctx, cmd, args)
+		err = cli.New(a, os.Stdin, os.Stdout).Run(ctx, cmd, args)
 	}
 	if err != nil {
 		return fail(err)
@@ -144,7 +127,7 @@ type tuiOptions struct {
 	pages, n, since              int
 	backlog, list, asJSON, fancy bool
 	refresh                      time.Duration
-	theme                        Theme
+	theme                        tui.Theme
 }
 
 func themeFlag(fs *flag.FlagSet) *string {
@@ -154,7 +137,7 @@ func themeFlag(fs *flag.FlagSet) *string {
 // Parse before login so usage errors never require credentials or network access.
 func parseTUIOptions(cmd string, args []string) (tuiOptions, error) {
 	var opts tuiOptions
-	fs := newFlagSet(cmd)
+	fs := cli.NewFlagSet(cmd)
 	name := themeFlag(fs)
 	if cmd == "review" {
 		fs.IntVar(&opts.since, "since", 0, "")
@@ -173,24 +156,32 @@ func parseTUIOptions(cmd string, args []string) (tuiOptions, error) {
 		fs.IntVar(&opts.pages, "pages", 3, "")
 	}
 	if err := fs.Parse(args); err != nil {
-		return opts, fmt.Errorf("%w: %v", errUsage, err)
+		return opts, fmt.Errorf("%w: %v", cli.ErrUsage, err)
 	}
 	if opts.refresh != 0 && opts.refresh < minRefresh {
-		return opts, fmt.Errorf("%w: --refresh must be 0 (off) or at least %s", errUsage, minRefresh)
+		return opts, fmt.Errorf("%w: --refresh must be 0 (off) or at least %s", cli.ErrUsage, minRefresh)
 	}
 	// Printed lists do not use themes, including the environment default.
 	if !opts.list && (cmd != "posts" || !opts.asJSON) {
 		var err error
-		opts.theme, err = resolveTheme(*name, os.Getenv("BSKYBAN_THEME"))
+		opts.theme, err = tui.ResolveTheme(*name, os.Getenv("BSKYBAN_THEME"))
 		if err != nil {
-			return opts, err
+			return opts, usageIfUnknownTheme(err)
 		}
 	} else if *name != "" {
-		if _, err := themeByName(*name); err != nil {
-			return opts, err
+		if _, err := tui.ThemeByName(*name); err != nil {
+			return opts, usageIfUnknownTheme(err)
 		}
 	}
 	return opts, nil
+}
+
+// usageIfUnknownTheme reports a bad theme name as a usage error (exit status 2).
+func usageIfUnknownTheme(err error) error {
+	if errors.Is(err, tui.ErrUnknownTheme) {
+		return fmt.Errorf("%w: %v", cli.ErrUsage, err)
+	}
+	return err
 }
 
 // envOn reports whether the environment variable is set to 1, true or yes.
@@ -204,8 +195,8 @@ func envOn(name string) bool {
 
 func fail(err error) int {
 	fmt.Fprintln(os.Stderr, "error:", termtext.Sanitize(err.Error()))
-	if errors.Is(err, errUsage) {
-		fmt.Fprint(os.Stderr, "\n", usageText)
+	if errors.Is(err, cli.ErrUsage) {
+		fmt.Fprint(os.Stderr, "\n", cli.UsageText)
 		return 2
 	}
 	return 1

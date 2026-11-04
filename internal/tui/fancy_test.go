@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"strings"
@@ -88,14 +88,5 @@ func TestFadeColourMovesAlongTheRamp(t *testing.T) {
 	*clock = clock.Add(time.Millisecond)
 	if _, ok := m.freshStyle("k"); ok {
 		t.Error("highlight should end at freshFor")
-	}
-}
-
-func TestEnvOn(t *testing.T) {
-	for v, want := range map[string]bool{"1": true, "true": true, "YES": true, " yes ": true, "": false, "0": false, "no": false} {
-		t.Setenv("BSKYBAN_FANCY", v)
-		if got := envOn("BSKYBAN_FANCY"); got != want {
-			t.Errorf("%q: got %v", v, got)
-		}
 	}
 }

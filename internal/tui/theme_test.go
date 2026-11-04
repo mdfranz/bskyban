@@ -1,11 +1,9 @@
-package main
+package tui
 
 import (
 	"bytes"
 	"errors"
 	"io"
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -49,13 +47,13 @@ func TestThemesComplete(t *testing.T) {
 		if selStyle.GetBold() || (th.SelBG == nil && !selStyle.GetReverse()) {
 			t.Errorf("%s has no selection styling", th.Name)
 		}
-		if got, err := themeByName(strings.ToUpper(th.Name)); err != nil || got.Name != th.Name {
+		if got, err := ThemeByName(strings.ToUpper(th.Name)); err != nil || got.Name != th.Name {
 			t.Errorf("lookup %s: %s, %v", th.Name, got.Name, err)
 		}
 	}
-	_, err := themeByName("nope")
-	if !errors.Is(err, errUsage) {
-		t.Fatalf("want usage error, got %v", err)
+	_, err := ThemeByName("nope")
+	if !errors.Is(err, ErrUnknownTheme) {
+		t.Fatalf("want ErrUnknownTheme, got %v", err)
 	}
 	for _, th := range themes {
 		if !strings.Contains(err.Error(), th.Name) {
@@ -69,23 +67,23 @@ func TestResolveTheme(t *testing.T) {
 		{"", "", "auto"}, {"", "catppuccin", "catppuccin"},
 		{"ansi", "catppuccin", "ansi"}, {"LiGhT", "invalid", "light"},
 	} {
-		th, err := resolveTheme(tc.flag, tc.env)
+		th, err := ResolveTheme(tc.flag, tc.env)
 		if err != nil || th.Name != tc.want {
 			t.Errorf("resolve(%q, %q): %s, %v", tc.flag, tc.env, th.Name, err)
 		}
 	}
-	if _, err := resolveTheme("invalid", "auto"); !errors.Is(err, errUsage) {
+	if _, err := ResolveTheme("invalid", "auto"); !errors.Is(err, ErrUnknownTheme) {
 		t.Errorf("invalid flag: %v", err)
 	}
-	if _, err := resolveTheme("", "invalid"); !errors.Is(err, errUsage) {
+	if _, err := ResolveTheme("", "invalid"); !errors.Is(err, ErrUnknownTheme) {
 		t.Errorf("invalid environment: %v", err)
 	}
 }
 
 func TestApplyThemeSelection(t *testing.T) {
 	preserveTheme(t)
-	ansi, _ := themeByName("ansi")
-	dracula, _ := themeByName("dracula")
+	ansi, _ := ThemeByName("ansi")
+	dracula, _ := ThemeByName("dracula")
 	applyTheme(dracula)
 	applyTheme(ansi)
 	if !selStyle.GetReverse() || selStyle.GetBackground() != (lipgloss.NoColor{}) {
@@ -97,38 +95,10 @@ func TestApplyThemeSelection(t *testing.T) {
 	}
 }
 
-func TestParseTUITheme(t *testing.T) {
-	for _, cmd := range []string{"review", "feed", "posts"} {
-		t.Run(cmd, func(t *testing.T) {
-			t.Setenv("BSKYBAN_THEME", "catppuccin")
-			opts, err := parseTUIOptions(cmd, nil)
-			if err != nil || opts.theme.Name != "catppuccin" {
-				t.Fatalf("env theme: %+v, %v", opts, err)
-			}
-			opts, err = parseTUIOptions(cmd, []string{"--theme", "ansi"})
-			if err != nil || opts.theme.Name != "ansi" {
-				t.Fatalf("flag theme: %+v, %v", opts, err)
-			}
-			if _, err := parseTUIOptions(cmd, []string{"--theme", "nope"}); !errors.Is(err, errUsage) {
-				t.Errorf("invalid theme: %v", err)
-			}
-			if cmd != "review" && opts.refresh != 30*time.Second {
-				t.Errorf("refresh default changed: %s", opts.refresh)
-			}
-		})
-	}
-	t.Setenv("BSKYBAN_THEME", "nope")
-	for _, cmd := range []string{"feed", "posts"} {
-		if _, err := parseTUIOptions(cmd, []string{"--list"}); err != nil {
-			t.Errorf("%s list should ignore theme environment: %v", cmd, err)
-		}
-	}
-}
-
 func TestCmdThemes(t *testing.T) {
 	previous := theme.Name
 	var out bytes.Buffer
-	if err := cmdThemes(&out); err != nil {
+	if err := PrintThemes(&out); err != nil {
 		t.Fatal(err)
 	}
 	plain := termtext.StripANSI(out.String())
@@ -143,7 +113,7 @@ func TestCmdThemes(t *testing.T) {
 	if theme.Name != previous {
 		t.Error("preview changed active theme")
 	}
-	if err := cmdThemes(failingThemeWriter{}); !errors.Is(err, io.ErrClosedPipe) || theme.Name != previous {
+	if err := PrintThemes(failingThemeWriter{}); !errors.Is(err, io.ErrClosedPipe) || theme.Name != previous {
 		t.Errorf("write failure: %v, theme=%s", err, theme.Name)
 	}
 }
@@ -200,55 +170,6 @@ func TestThemeFadeEndpoints(t *testing.T) {
 }
 
 // Separate processes exercise realMain and fresh renderer environment detection.
-func TestThemeCLI(t *testing.T) {
-	if os.Getenv("BSKYBAN_THEME_TEST_PROCESS") == "1" {
-		for i, arg := range os.Args {
-			if arg == "--" {
-				os.Args = append([]string{"bskyban"}, os.Args[i+1:]...)
-				os.Exit(realMain())
-			}
-		}
-		t.Fatal("missing subprocess arguments")
-	}
-	t.Setenv("BSKYBAN_THEME_TEST_PROCESS", "1")
-	t.Setenv("BSKY_HANDLE", "")
-	t.Setenv("BSKY_APP_PASSWORD", "")
-	t.Setenv("BSKYBAN_THEME", "invalid-env")
-	t.Setenv("TERM", "xterm-256color")
-	t.Setenv("CLICOLOR_FORCE", "1")
-	t.Setenv("NO_COLOR", "1")
-	for _, tc := range []struct {
-		args     []string
-		code     int
-		contains string
-	}{
-		{[]string{"themes"}, 0, "▸ 4m Sample post"},
-		{[]string{"themes", "extra"}, 2, "themes takes no arguments"},
-		{[]string{"feed", "--theme", "nope"}, 2, "auto, dark, light, ansi, dracula, catppuccin"},
-		{[]string{"review", "--theme", "nope"}, 2, "unknown theme"},
-		{[]string{"posts", "--theme", "nope"}, 2, "unknown theme"},
-		{[]string{"feed", "--theme", "ansi"}, 1, "BSKY_HANDLE and BSKY_APP_PASSWORD must be set"},
-		// no command means feed: --pages is a feed flag, so it parses and reaches the
-		// (deliberately invalid) theme check; review rejects the flag first
-		{[]string{"--pages", "2"}, 2, "unknown theme"},
-		{[]string{"review", "--pages", "2"}, 2, "flag provided but not defined"},
-	} {
-		cmd := exec.Command(os.Args[0], append([]string{"-test.run=^TestThemeCLI$", "--"}, tc.args...)...)
-		out, err := cmd.CombinedOutput()
-		code := 0
-		if err != nil {
-			var exit *exec.ExitError
-			if !errors.As(err, &exit) {
-				t.Fatal(err)
-			}
-			code = exit.ExitCode()
-		}
-		if code != tc.code || !strings.Contains(string(out), tc.contains) || bytes.Contains(out, []byte("\x1b[")) {
-			t.Errorf("%v: exit=%d, output=%q", tc.args, code, out)
-		}
-	}
-}
-
 func TestOnlyAdaptiveThemesDetectTheBackground(t *testing.T) {
 	want := map[string]bool{"auto": true, "dark": false, "light": false, "ansi": false, "dracula": false, "catppuccin": true}
 	for _, th := range themes {

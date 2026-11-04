@@ -39,7 +39,7 @@ Requires Go 1.26+ (see `go.mod`).
 git clone https://github.com/mdfranz/bskyban
 cd bskyban
 make build        # produces ./bskyban
-# or: go install github.com/mdfranz/bskyban@latest
+# or: go install github.com/mdfranz/bskyban/cmd/bskyban@latest
 ```
 
 ## Setup
@@ -288,7 +288,7 @@ Talks to the AT Protocol XRPC API directly over `net/http` (no SDK):
 
 ### Smoke test
 
-`./smoke.sh` (or `make smoke`) runs the real CLI against your real account to check
+`./scripts/smoke.sh` (or `make smoke`) runs the real CLI against your real account to check
 that login, listing, `show`, the feed, local state and the audit log all work. It
 **does not change your account**: `block` and `unblock` only ever run with
 `--dry-run` (the script's wrapper aborts if anything else is attempted), the

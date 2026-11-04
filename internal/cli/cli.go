@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"bufio"
@@ -20,9 +20,10 @@ import (
 	"github.com/rivo/uniseg"
 )
 
-var errUsage = errors.New("usage")
+// ErrUsage marks a mistake in how bskyban was invoked; the caller exits with status 2.
+var ErrUsage = errors.New("usage")
 
-const usageText = `bskyban - review and block Bluesky followers
+const UsageText = `bskyban - review and block Bluesky followers
 
 Usage:
   bskyban [feed] [--pages N] [--backlog] [--refresh 30s] [--fancy] [--theme NAME] [--list [--json]]
@@ -55,14 +56,18 @@ Environment:
   BSKYBAN_THEME                    auto (default), dark, light, ansi, dracula, catppuccin
 `
 
-// cliApp is the shared application plus the streams the subcommands read and write.
-type cliApp struct {
+// CLI is the shared application plus the streams the subcommands read and write.
+type CLI struct {
 	*app.App
 	stdin  io.Reader
 	stdout io.Writer
 }
 
-func (a *cliApp) cmdFeedList(ctx context.Context, pages int, backlog, asJSON bool) error {
+// New returns the subcommands for a, reading from in and writing to out.
+func New(a *app.App, in io.Reader, out io.Writer) *CLI { return &CLI{App: a, stdin: in, stdout: out} }
+
+// FeedList prints the repost authors the Reposts tab would offer (--list).
+func (a *CLI) FeedList(ctx context.Context, pages int, backlog, asJSON bool) error {
 	list, rc, err := a.FeedCandidates(ctx, pages, backlog)
 	if err != nil {
 		return err
@@ -85,7 +90,8 @@ func (a *cliApp) cmdFeedList(ctx context.Context, pages int, backlog, asJSON boo
 	return nil
 }
 
-func (a *cliApp) run(ctx context.Context, cmd string, args []string) error {
+// Run executes a subcommand that needs a login and no terminal UI.
+func (a *CLI) Run(ctx context.Context, cmd string, args []string) error {
 	switch cmd {
 	case "list":
 		return a.cmdList(ctx, args)
@@ -102,23 +108,23 @@ func (a *cliApp) run(ctx context.Context, cmd string, args []string) error {
 	case "block", "keep", "unblock", "follow", "unfollow":
 		return a.cmdAct(ctx, cmd, args)
 	}
-	return fmt.Errorf("%w: unknown command %q", errUsage, cmd)
+	return fmt.Errorf("%w: unknown command %q", ErrUsage, cmd)
 }
 
-func newFlagSet(name string) *flag.FlagSet {
+func NewFlagSet(name string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	return fs
 }
 
-func (a *cliApp) cmdList(ctx context.Context, args []string) error {
-	fs := newFlagSet("list")
+func (a *CLI) cmdList(ctx context.Context, args []string) error {
+	fs := NewFlagSet("list")
 	since := fs.Int("since", 0, "")
 	all := fs.Bool("all", false, "")
 	backlog := fs.Bool("backlog", false, "")
 	asJSON := fs.Bool("json", false, "")
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w: %v", errUsage, err)
+		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
 	list, err := a.Followers(ctx, *since, *all, *backlog)
 	if err != nil {
@@ -163,7 +169,7 @@ func (a *cliApp) cmdList(ctx context.Context, args []string) error {
 
 // cmdBaseline marks every follower without a decision as skipped, so only
 // followers who arrive afterwards show up by default.
-func (a *cliApp) cmdBaseline(ctx context.Context) error {
+func (a *CLI) cmdBaseline(ctx context.Context) error {
 	list, err := a.Followers(ctx, 0, false, false)
 	if err != nil {
 		return err
@@ -180,9 +186,9 @@ func (a *cliApp) cmdBaseline(ctx context.Context) error {
 	return nil
 }
 
-func (a *cliApp) cmdShow(ctx context.Context, args []string) error {
+func (a *CLI) cmdShow(ctx context.Context, args []string) error {
 	if len(args) != 1 {
-		return fmt.Errorf("%w: show takes exactly one handle or DID", errUsage)
+		return fmt.Errorf("%w: show takes exactly one handle or DID", ErrUsage)
 	}
 	p, err := a.Client.GetProfile(ctx, normalizeActor(args[0]))
 	if err != nil {
@@ -213,18 +219,18 @@ func (a *cliApp) cmdShow(ctx context.Context, args []string) error {
 	return nil
 }
 
-func (a *cliApp) cmdAct(ctx context.Context, cmd string, args []string) error {
-	fs := newFlagSet(cmd)
+func (a *CLI) cmdAct(ctx context.Context, cmd string, args []string) error {
+	fs := NewFlagSet(cmd)
 	dry := fs.Bool("dry-run", false, "")
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w: %v", errUsage, err)
+		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
 	ids, err := a.identifiers(fs.Args())
 	if err != nil {
 		return err
 	}
 	if len(ids) == 0 {
-		return fmt.Errorf("%w: %s needs at least one handle or DID", errUsage, cmd)
+		return fmt.Errorf("%w: %s needs at least one handle or DID", ErrUsage, cmd)
 	}
 	var failed int
 	for _, id := range ids {
@@ -241,7 +247,8 @@ func (a *cliApp) cmdAct(ctx context.Context, cmd string, args []string) error {
 
 // cmdPostsList prints up to n of your own posts, newest first, with the record
 // key that delete-post accepts.
-func (a *cliApp) cmdPostsList(ctx context.Context, n int, asJSON bool) error {
+// PostsList prints your own recent posts.
+func (a *CLI) PostsList(ctx context.Context, n int, asJSON bool) error {
 	enc := json.NewEncoder(a.stdout)
 	cursor := ""
 	for printed := 0; printed < n; {
@@ -274,11 +281,11 @@ func (a *cliApp) cmdPostsList(ctx context.Context, n int, asJSON bool) error {
 
 // cmdPost publishes a text post; the text is the arguments joined by spaces,
 // or all of stdin when the only argument is "-".
-func (a *cliApp) cmdPost(ctx context.Context, args []string) (err error) {
-	fs := newFlagSet("post")
+func (a *CLI) cmdPost(ctx context.Context, args []string) (err error) {
+	fs := NewFlagSet("post")
 	dry := fs.Bool("dry-run", false, "")
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w: %v", errUsage, err)
+		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
 	var text string
 	if rest := fs.Args(); len(rest) == 1 && rest[0] == "-" {
@@ -292,7 +299,7 @@ func (a *cliApp) cmdPost(ctx context.Context, args []string) (err error) {
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return fmt.Errorf("%w: post needs some text", errUsage)
+		return fmt.Errorf("%w: post needs some text", ErrUsage)
 	}
 	if n := uniseg.GraphemeClusterCount(text); n > bsky.MaxPostGraphemes {
 		return fmt.Errorf("post is %d characters; the limit is %d", n, bsky.MaxPostGraphemes)
@@ -320,14 +327,14 @@ func (a *cliApp) cmdPost(ctx context.Context, args []string) (err error) {
 
 // cmdDeletePost deletes your own posts, each given as an at:// URI, a
 // bsky.app post link, or a bare record key.
-func (a *cliApp) cmdDeletePost(ctx context.Context, args []string) error {
-	fs := newFlagSet("delete-post")
+func (a *CLI) cmdDeletePost(ctx context.Context, args []string) error {
+	fs := NewFlagSet("delete-post")
 	dry := fs.Bool("dry-run", false, "")
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w: %v", errUsage, err)
+		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
 	if fs.NArg() == 0 {
-		return fmt.Errorf("%w: delete-post needs at least one post", errUsage)
+		return fmt.Errorf("%w: delete-post needs at least one post", ErrUsage)
 	}
 	var failed int
 	for _, ref := range fs.Args() {
@@ -342,7 +349,7 @@ func (a *cliApp) cmdDeletePost(ctx context.Context, args []string) error {
 	return nil
 }
 
-func (a *cliApp) deletePost(ctx context.Context, ref string, dry bool) (err error) {
+func (a *CLI) deletePost(ctx context.Context, ref string, dry bool) (err error) {
 	ev := store.AuditEvent{Action: "delete-post", DID: a.Client.DID, Handle: a.Client.Handle, DryRun: dry, Detail: termtext.TruncateWidth(termtext.Sanitize(ref), 200)}
 	defer func() {
 		ev.OK = err == nil
@@ -368,7 +375,7 @@ func (a *cliApp) deletePost(ctx context.Context, ref string, dry bool) (err erro
 }
 
 // postURI resolves ref to the AT URI of one of your own posts.
-func (a *cliApp) postURI(ctx context.Context, ref string) (string, error) {
+func (a *CLI) postURI(ctx context.Context, ref string) (string, error) {
 	uri, err := a.resolvePost(ctx, ref)
 	if err != nil {
 		return "", err
@@ -381,26 +388,26 @@ func (a *cliApp) postURI(ctx context.Context, ref string) (string, error) {
 
 // resolvePost turns an at:// URI, a bsky.app post link or a bare record key
 // (one of your own posts) into the post's AT URI.
-func (a *cliApp) resolvePost(ctx context.Context, ref string) (string, error) {
+func (a *CLI) resolvePost(ctx context.Context, ref string) (string, error) {
 	ref = strings.TrimSpace(ref)
 	var actor, rkey string
 	switch {
 	case strings.HasPrefix(ref, "at://"):
 		parts := strings.Split(strings.TrimPrefix(ref, "at://"), "/")
 		if len(parts) != 3 || parts[1] != bsky.PostCollection {
-			return "", fmt.Errorf("%w: not a post URI", errUsage)
+			return "", fmt.Errorf("%w: not a post URI", ErrUsage)
 		}
 		actor, rkey = parts[0], parts[2]
 	case strings.HasPrefix(ref, "https://"):
 		parts := strings.Split(strings.TrimPrefix(ref, "https://"), "/")
 		if len(parts) < 5 || parts[0] != "bsky.app" || parts[1] != "profile" || parts[3] != "post" {
-			return "", fmt.Errorf("%w: not a bsky.app post link", errUsage)
+			return "", fmt.Errorf("%w: not a bsky.app post link", ErrUsage)
 		}
 		actor, rkey = parts[2], parts[4]
 	case ref != "" && !strings.ContainsAny(ref, "/:"):
 		actor, rkey = a.Client.DID, ref
 	default:
-		return "", fmt.Errorf("%w: expected an at:// URI, bsky.app link or record key", errUsage)
+		return "", fmt.Errorf("%w: expected an at:// URI, bsky.app link or record key", ErrUsage)
 	}
 	if !strings.HasPrefix(actor, "did:") {
 		p, err := a.Client.GetProfile(ctx, normalizeActor(actor))
@@ -413,14 +420,14 @@ func (a *cliApp) resolvePost(ctx context.Context, ref string) (string, error) {
 }
 
 // cmdLike likes or unlikes posts given as at:// URIs or bsky.app links.
-func (a *cliApp) cmdLike(ctx context.Context, cmd string, args []string) error {
-	fs := newFlagSet(cmd)
+func (a *CLI) cmdLike(ctx context.Context, cmd string, args []string) error {
+	fs := NewFlagSet(cmd)
 	dry := fs.Bool("dry-run", false, "")
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w: %v", errUsage, err)
+		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
 	if fs.NArg() == 0 {
-		return fmt.Errorf("%w: %s needs at least one post", errUsage, cmd)
+		return fmt.Errorf("%w: %s needs at least one post", ErrUsage, cmd)
 	}
 	var failed int
 	for _, ref := range fs.Args() {
@@ -435,7 +442,7 @@ func (a *cliApp) cmdLike(ctx context.Context, cmd string, args []string) error {
 	return nil
 }
 
-func (a *cliApp) likePost(ctx context.Context, cmd, ref string, dry bool) (err error) {
+func (a *CLI) likePost(ctx context.Context, cmd, ref string, dry bool) (err error) {
 	ev := store.AuditEvent{Action: cmd, DID: a.Client.DID, Handle: a.Client.Handle, DryRun: dry, Detail: termtext.TruncateWidth(termtext.Sanitize(ref), 200)}
 	defer func() {
 		ev.OK = err == nil
@@ -478,7 +485,7 @@ func (a *cliApp) likePost(ctx context.Context, cmd, ref string, dry bool) (err e
 	return err
 }
 
-func (a *cliApp) act(ctx context.Context, cmd, id string, dry bool) (err error) {
+func (a *CLI) act(ctx context.Context, cmd, id string, dry bool) (err error) {
 	p, perr := a.Client.GetProfile(ctx, id)
 	if perr != nil {
 		a.record(store.AuditEvent{Action: cmd, Handle: id, DryRun: dry, Error: perr.Error()})
@@ -573,7 +580,7 @@ func (a *cliApp) act(ctx context.Context, cmd, id string, dry bool) (err error) 
 }
 
 // record writes an audit event; a failing log is reported but never hides the action's result.
-func (a *cliApp) record(e store.AuditEvent) {
+func (a *CLI) record(e store.AuditEvent) {
 	if e.Source == "" {
 		e.Source = "cli"
 	}
@@ -583,7 +590,7 @@ func (a *cliApp) record(e store.AuditEvent) {
 }
 
 // identifiers expands "-" into whitespace-separated first fields of stdin lines.
-func (a *cliApp) identifiers(args []string) ([]string, error) {
+func (a *CLI) identifiers(args []string) ([]string, error) {
 	var ids []string
 	for _, arg := range args {
 		if arg != "-" {

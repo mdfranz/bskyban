@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test: runs the real CLI against your real Bluesky account WITHOUT changing it.
 #
-#   BSKY_HANDLE=you.bsky.social BSKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx ./smoke.sh
+#   BSKY_HANDLE=you.bsky.social BSKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx ./scripts/smoke.sh
 #
 # What it never does:
 #   - block, unblock, follow or unfollow for real (they only run with --dry-run)
@@ -11,7 +11,7 @@
 # is removed on exit. The only network traffic is read-only requests plus login.
 
 set -u
-cd "$(dirname "$0")" || exit 2
+cd "$(dirname "$0")/.." || exit 2
 
 if [[ -z "${BSKY_HANDLE:-}" || -z "${BSKY_APP_PASSWORD:-}" ]]; then
   echo "set BSKY_HANDLE and BSKY_APP_PASSWORD first" >&2
@@ -60,7 +60,7 @@ lines() { [[ -z "$1" ]] && echo 0 || printf '%s\n' "$1" | wc -l | tr -d ' '; }
 field() { grep -o "\"$1\":\"[^\"]*\"" | head -1 | cut -d'"' -f4; }
 
 section "build"
-if go build -o "$BIN" .; then ok "go build"; else bad "go build"; exit 1; fi
+if go build -o "$BIN" ./cmd/bskyban; then ok "go build"; else bad "go build"; exit 1; fi
 
 section "no login needed"
 OUT=$(env -u BSKY_HANDLE -u BSKY_APP_PASSWORD "$BIN" help 2>&1); RC=$?

@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"github.com/mdfranz/bskyban/internal/app"
 	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/store"
+	"github.com/mdfranz/bskyban/internal/testpds"
 )
 
 func post(uri, handle, by string) bsky.FeedItem {
@@ -48,8 +49,8 @@ func (s *script) fn(_ context.Context, cursor string) ([]bsky.FeedItem, string, 
 }
 
 func refreshModel(t *testing.T, s *script, shown ...bsky.FeedItem) model {
-	a, _ := newTestApp(t)
-	m := newFeedModel(a.App, nil, s.fn)
+	a, _ := testpds.New(t)
+	m := newFeedModel(a, nil, s.fn)
 	m.loading, m.followLoading = false, false
 	m.ctxs = map[string]app.RepostCtx{}
 	m.refresh = 30 * time.Second

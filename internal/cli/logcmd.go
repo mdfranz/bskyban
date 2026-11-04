@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"encoding/json"
@@ -29,16 +29,16 @@ func parseSince(s string) (time.Duration, error) {
 	return d, nil
 }
 
-// runLog implements `bskyban log`. It needs no login.
-func runLog(args []string, out io.Writer) error {
-	fs := newFlagSet("log")
+// RunLog implements `bskyban log`. It needs no login.
+func RunLog(args []string, out io.Writer) error {
+	fs := NewFlagSet("log")
 	since := fs.String("since", "", "")
 	action := fs.String("action", "", "")
 	who := fs.String("who", "", "")
 	asJSON := fs.Bool("json", false, "")
 	n := fs.Int("n", 50, "")
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w: %v", errUsage, err)
+		return fmt.Errorf("%w: %v", ErrUsage, err)
 	}
 	path := os.Getenv("BSKYBAN_AUDIT")
 	if path == "" {
@@ -55,7 +55,7 @@ func runLog(args []string, out io.Writer) error {
 	if *since != "" {
 		d, err := parseSince(*since)
 		if err != nil {
-			return fmt.Errorf("%w: %v", errUsage, err)
+			return fmt.Errorf("%w: %v", ErrUsage, err)
 		}
 		cutoff = time.Now().Add(-d)
 	}

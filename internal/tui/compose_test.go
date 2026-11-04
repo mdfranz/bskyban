@@ -1,4 +1,4 @@
-package main
+package tui
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"github.com/mdfranz/bskyban/internal/app"
 	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
+	"github.com/mdfranz/bskyban/internal/testpds"
 )
 
 // step sends msg and, if it started an async action, feeds that action's result back.
@@ -33,7 +34,7 @@ func typeText(m model, s string) model {
 	return m
 }
 
-func feedWithTimeline(t *testing.T) (model, *fakePDS) {
+func feedWithTimeline(t *testing.T) (model, *testpds.PDS) {
 	m, f := followingModel(t)
 	m.timeline = func(context.Context, string) ([]bsky.FeedItem, string, error) { return nil, "", nil }
 	return m, f
@@ -56,8 +57,8 @@ func TestComposeAndPost(t *testing.T) {
 	if m.composing || m.err != nil {
 		t.Fatalf("composing=%v err=%v", m.composing, m.err)
 	}
-	if f.joined() != "post" {
-		t.Errorf("calls = %q", f.joined())
+	if f.Joined() != "post" {
+		t.Errorf("calls = %q", f.Joined())
 	}
 	if !strings.Contains(m.status, "posted") {
 		t.Errorf("status = %q", m.status)
@@ -70,14 +71,14 @@ func TestComposeEscDiscardsAndLongPostIsRefused(t *testing.T) {
 	m = typeText(m, "draft")
 	next, _ := m.Update(key("esc"))
 	m = next.(model)
-	if m.composing || f.joined() != "" {
-		t.Fatalf("esc should discard without posting (composing=%v calls=%q)", m.composing, f.joined())
+	if m.composing || f.Joined() != "" {
+		t.Fatalf("esc should discard without posting (composing=%v calls=%q)", m.composing, f.Joined())
 	}
 	m = openCompose(m)
 	m.input.SetValue(strings.Repeat("x", bsky.MaxPostGraphemes+1))
 	m = step(m, key("enter"))
-	if !m.composing || m.err == nil || f.joined() != "" {
-		t.Errorf("over-long post should stay open with an error (composing=%v err=%v calls=%q)", m.composing, m.err, f.joined())
+	if !m.composing || m.err == nil || f.Joined() != "" {
+		t.Errorf("over-long post should stay open with an error (composing=%v err=%v calls=%q)", m.composing, m.err, f.Joined())
 	}
 }
 
@@ -87,20 +88,20 @@ func TestDeleteOwnPostNeedsConfirmation(t *testing.T) {
 		Post: bsky.Post{Text: "mine", CreatedAt: "2026-11-01T07:00:00Z"}}
 	m.items = append([]bsky.FeedItem{own}, m.items...)
 	m = step(m, key("d"))
-	if f.joined() != "" || len(m.items) != 3 {
-		t.Fatalf("first d must only ask (calls=%q items=%d)", f.joined(), len(m.items))
+	if f.Joined() != "" || len(m.items) != 3 {
+		t.Fatalf("first d must only ask (calls=%q items=%d)", f.Joined(), len(m.items))
 	}
 	m = step(m, key("d"))
-	if f.joined() != "delete-post" || len(m.items) != 2 {
-		t.Errorf("calls=%q items=%d", f.joined(), len(m.items))
+	if f.Joined() != "delete-post" || len(m.items) != 2 {
+		t.Errorf("calls=%q items=%d", f.Joined(), len(m.items))
 	}
-	if len(f.deleted) != 1 || f.deleted[0] != "3k" {
-		t.Errorf("deleted = %v", f.deleted)
+	if len(f.DeletedKeys()) != 1 || f.DeletedKeys()[0] != "3k" {
+		t.Errorf("deleted = %v", f.DeletedKeys())
 	}
 	m = step(m, key("d")) // now on someone else's post
 	m = step(m, key("d"))
-	if f.joined() != "delete-post" || len(m.items) != 2 {
-		t.Errorf("someone else's post must not be deleted (calls=%q)", f.joined())
+	if f.Joined() != "delete-post" || len(m.items) != 2 {
+		t.Errorf("someone else's post must not be deleted (calls=%q)", f.Joined())
 	}
 }
 
@@ -111,8 +112,8 @@ func openCompose(m model) model {
 }
 
 func TestPostsModelIsAFeedOfYourOwnPosts(t *testing.T) {
-	a, _ := newTestApp(t)
-	m := newPostsModel(a.App, func(context.Context, string) ([]bsky.FeedItem, string, error) { return nil, "", nil })
+	a, _ := testpds.New(t)
+	m := newPostsModel(a, func(context.Context, string) ([]bsky.FeedItem, string, error) { return nil, "", nil })
 	m.followLoading = false
 	m.width, m.height = 100, 30
 	m.items = []bsky.FeedItem{{Author: bsky.Profile{DID: "did:me", Handle: "me.bsky.social"}, URI: "at://did:me/app.bsky.feed.post/3k", Post: bsky.Post{Text: "mine"}}}
@@ -152,8 +153,8 @@ func TestReplyComposeShowsTarget(t *testing.T) {
 	}
 	m = typeText(m, "thanks")
 	m = step(m, key("enter"))
-	if m.composing || f.joined() != "post" {
-		t.Errorf("composing=%v calls=%q err=%v", m.composing, f.joined(), m.err)
+	if m.composing || f.Joined() != "post" {
+		t.Errorf("composing=%v calls=%q err=%v", m.composing, f.Joined(), m.err)
 	}
 }
 
@@ -163,15 +164,15 @@ func TestLikeTogglesAndMarksEveryCopy(t *testing.T) {
 	m.items[0].URI, m.items[0].CID = uri, "cid9"
 	m.items[1].URI, m.items[1].CID = uri, "cid9" // the same post, reposted
 	m = step(m, key("h"))
-	if f.joined() != "like" || m.items[0].Like == "" || m.items[1].Like == "" {
-		t.Fatalf("calls=%q likes=%q/%q err=%v", f.joined(), m.items[0].Like, m.items[1].Like, m.err)
+	if f.Joined() != "like" || m.items[0].Like == "" || m.items[1].Like == "" {
+		t.Fatalf("calls=%q likes=%q/%q err=%v", f.Joined(), m.items[0].Like, m.items[1].Like, m.err)
 	}
 	if v := m.View(); !strings.Contains(v, "♥") {
 		t.Errorf("liked post should show ♥:\n%s", v)
 	}
 	m = step(m, key("h"))
-	if f.joined() != "like,unlike" || m.items[0].Like != "" || m.items[1].Like != "" {
-		t.Errorf("calls=%q likes=%q/%q", f.joined(), m.items[0].Like, m.items[1].Like)
+	if f.Joined() != "like,unlike" || m.items[0].Like != "" || m.items[1].Like != "" {
+		t.Errorf("calls=%q likes=%q/%q", f.Joined(), m.items[0].Like, m.items[1].Like)
 	}
 }
 
@@ -183,8 +184,8 @@ func TestLikeAndReplyOnTheRepostedPostInTheRepostsTab(t *testing.T) {
 	m.list = []bsky.Profile{author}
 	m.ctxs = map[string]app.RepostCtx{"did:rando": {Post: item.Post, Item: item, By: []string{"friend.bsky.social"}}}
 	m = step(m, key("h"))
-	if f.joined() != "like" || m.ctxs["did:rando"].Item.Like == "" {
-		t.Fatalf("calls=%q err=%v", f.joined(), m.err)
+	if f.Joined() != "like" || m.ctxs["did:rando"].Item.Like == "" {
+		t.Fatalf("calls=%q err=%v", f.Joined(), m.err)
 	}
 	if v := m.View(); !strings.Contains(v, "you liked this") {
 		t.Errorf("view:\n%s", v)
@@ -236,8 +237,8 @@ func TestHIsHeartInTheFeedButStillMovesInReview(t *testing.T) {
 	m.items[0].URI, m.items[0].CID = "at://did:friend/app.bsky.feed.post/1", "c1"
 	m = press(m, "enter") // open the post; h used to mean "previous" here
 	m = step(m, key("h"))
-	if f.joined() != "like" || m.cur != 0 {
-		t.Errorf("h should like and stay on the post: calls=%q cur=%d", f.joined(), m.cur)
+	if f.Joined() != "like" || m.cur != 0 {
+		t.Errorf("h should like and stay on the post: calls=%q cur=%d", f.Joined(), m.cur)
 	}
 	if strings.Contains(m.hint(), "L like") || !strings.Contains(m.hint(), "h like") {
 		t.Errorf("hint should say h like: %s", m.hint())
