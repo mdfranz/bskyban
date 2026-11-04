@@ -4,9 +4,11 @@
 package termtext
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
@@ -221,3 +223,40 @@ func StripANSI(s string) string { return ansiRe.ReplaceAllString(s, "") }
 
 // StripLinks removes OSC 8 hyperlink escapes, leaving the link text.
 func StripLinks(s string) string { return oscRe.ReplaceAllString(s, "") }
+
+// TruncateWidth cuts s to at most w display columns, ending in "…" when something was cut.
+func TruncateWidth(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= w {
+		return s
+	}
+	var b strings.Builder
+	used := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if used+rw > w-1 {
+			break
+		}
+		b.WriteRune(r)
+		used += rw
+	}
+	return b.String() + "…"
+}
+
+// HumanAge is a duration as one short unit: 5m, 3h, 12d or 7mo ("?" when unknown).
+func HumanAge(d time.Duration) string {
+	switch {
+	case d <= 0:
+		return "?"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	case d < 90*24*time.Hour:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
+	default:
+		return fmt.Sprintf("%dmo", int(d.Hours()/24/30))
+	}
+}

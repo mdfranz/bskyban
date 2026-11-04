@@ -71,3 +71,36 @@ func TestMediaMarkers(t *testing.T) {
 		}
 	}
 }
+
+func TestLinkCardLabel(t *testing.T) {
+	uri := "https://www.theatlantic.com/politics/archive/2026/11/x/1"
+	c := LinkCard{URI: uri, Title: "The Limits of Trump's Trickery"}
+	// the URL is always shown in full (terminals detect plain URLs), never twice
+	for text, want := range map[string]string{
+		"read this":                             "↗ The Limits of Trump's Trickery " + uri,
+		"see " + uri:                            "↗ The Limits of Trump's Trickery",
+		"the limits of trump's trickery":        "↗ " + uri,
+		"the limits of trump's trickery " + uri: "",
+	} {
+		if got := c.Label(text); got != want {
+			t.Errorf("Label(%q) = %q, want %q", text, got, want)
+		}
+	}
+	if got := (LinkCard{URI: "https://bit.ly/3V270SA"}).Label(""); got != "↗ https://bit.ly/3V270SA" {
+		t.Errorf("untitled card = %q", got)
+	}
+}
+
+func TestPreviewKeepsURLsWhole(t *testing.T) {
+	long := "https://www.washingtonpost.com/technology/2026/11/03/google-deepmind-staff-protest-lifetime-ban/"
+	p := Post{Text: "A big night " + long, Link: &LinkCard{URI: "https://bit.ly/3V270SA", Title: "The Limits of Trump's Midterm Trickery"}}
+	if got := p.Preview(); got != "A big night "+long+" ↗ The Limits of Trump's Midterm Trickery https://bit.ly/3V270SA" {
+		t.Errorf("preview should keep URLs whole: %q", got)
+	}
+}
+
+func TestPostURL(t *testing.T) {
+	if got := PostURL("at://did:plc:x/app.bsky.feed.post/3k"); got != "https://bsky.app/profile/did:plc:x/post/3k" {
+		t.Errorf("got %q", got)
+	}
+}

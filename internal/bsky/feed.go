@@ -278,3 +278,13 @@ func (c *Client) GetTimelineReposts(ctx context.Context, pages int) ([]Repost, e
 	}
 	return reposts, nil
 }
+
+// PostURL turns at://did/app.bsky.feed.post/rkey into its bsky.app link.
+func PostURL(uri string) string {
+	if i := strings.LastIndex(uri, "/"); i >= 0 && strings.HasPrefix(uri, "at://") {
+		if parts := strings.Split(strings.TrimPrefix(uri, "at://"), "/"); len(parts) == 3 {
+			return "https://bsky.app/profile/" + parts[0] + "/post/" + uri[i+1:]
+		}
+	}
+	return uri
+}

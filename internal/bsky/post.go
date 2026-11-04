@@ -133,3 +133,41 @@ func describeEmbed(raw json.RawMessage) []string {
 	}
 	return out
 }
+
+// Preview is the text shown for a post in the list: its text, then any
+// attachments and quoted post, so image-only posts still say something.
+// Preview is the post's own text, attachments and link card as one paragraph (no
+// stray line breaks). URLs stay whole so the terminal can detect and open them.
+// A quoted post is left out; itemLines shows it on lines of its own.
+func (p Post) Preview() string {
+	parts := append([]string{p.Text}, p.Attach...)
+	if p.Link != nil {
+		parts = append(parts, p.Link.Label(p.Text))
+	}
+	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+}
+
+// title is the page title to show, unless it is missing or the post's text
+// already says it.
+func (c LinkCard) title(text string) string {
+	if c.Title == "" || strings.Contains(strings.ToLower(text), strings.ToLower(c.Title)) {
+		return ""
+	}
+	return c.Title
+}
+
+// Label is the card in one line: "↗ Title https://…". The URL is left out when the
+// post's text already has it, and the title when the text already says it.
+func (c LinkCard) Label(text string) string {
+	parts := []string{"↗"}
+	if t := c.title(text); t != "" {
+		parts = append(parts, t)
+	}
+	if !strings.Contains(text, c.URI) {
+		parts = append(parts, c.URI)
+	}
+	if len(parts) == 1 { // the text has both: nothing left to add
+		return ""
+	}
+	return strings.Join(parts, " ")
+}

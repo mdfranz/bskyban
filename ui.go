@@ -831,7 +831,7 @@ func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) applyPosted(msg postedMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	ev := store.AuditEvent{Action: "post", DID: m.a.Client.DID, Handle: m.a.Client.Handle, Source: "tui:following", OK: msg.err == nil, Record: msg.uri,
-		Detail: truncateWidth(strings.Join(strings.Fields(msg.text), " "), 200)}
+		Detail: termtext.TruncateWidth(strings.Join(strings.Fields(msg.text), " "), 200)}
 	if msg.reply != nil {
 		ev.Via = "reply to " + msg.reply.Parent.URI
 	}
@@ -851,7 +851,7 @@ func (m model) applyPosted(msg postedMsg) (tea.Model, tea.Cmd) {
 	}
 	m.quitting = false
 	m, cmd := m.startCheck(true) // shows the new post at the top
-	m.status = "posted " + postURL(msg.uri)
+	m.status = "posted " + bsky.PostURL(msg.uri)
 	return m, cmd
 }
 
@@ -973,7 +973,7 @@ func (m model) applyDeleted(msg deletedMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	it := msg.item
 	ev := store.AuditEvent{Action: "delete-post", DID: m.a.Client.DID, Handle: m.a.Client.Handle, Source: "tui:following", OK: msg.err == nil, Record: it.URI,
-		Detail: truncateWidth(strings.Join(strings.Fields(it.Post.Text), " "), 200)}
+		Detail: termtext.TruncateWidth(strings.Join(strings.Fields(it.Post.Text), " "), 200)}
 	if msg.err != nil {
 		ev.Error = msg.err.Error()
 		m.audit(ev)
@@ -1364,7 +1364,7 @@ func (m model) profilePanel(cw int, pos string) []string {
 	row := func(label, val string) {
 		lines = append(lines, dimStyle.Render(fmt.Sprintf("%-12s", label))+" "+val)
 	}
-	row("Account age", humanAge(p.Age()))
+	row("Account age", termtext.HumanAge(p.Age()))
 	if t, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
 		row("Joined", t.Format("2006-01-02"))
 	}
@@ -1428,7 +1428,7 @@ func statsLine(it bsky.FeedItem) string {
 // postLink is the post's bsky.app address, using the author's handle when known.
 func postLink(it bsky.FeedItem) string {
 	if it.Author.Handle == "" {
-		return postURL(it.URI)
+		return bsky.PostURL(it.URI)
 	}
 	return "https://bsky.app/profile/" + it.Author.Handle + "/post/" + it.URI[strings.LastIndex(it.URI, "/")+1:]
 }
@@ -1705,7 +1705,7 @@ func (m model) composeView() string {
 		b.WriteString(headingStyle.Render("Reply to @"+termtext.Sanitize(r.Author.Handle)) + "\n")
 		quote := strings.Join(strings.Fields(termtext.Sanitize(r.Post.Text)), " ")
 		if w := m.width - 4; w > 10 {
-			quote = truncateWidth(quote, w)
+			quote = termtext.TruncateWidth(quote, w)
 		}
 		b.WriteString(dimStyle.Render("▎ "+quote) + "\n\n")
 	} else {
@@ -1729,66 +1729,8 @@ func (m model) composeView() string {
 
 // ---------------------------------------------------------------- timeline list
 
-func truncateWidth(s string, w int) string {
-	if w <= 0 {
-		return ""
-	}
-	if lipgloss.Width(s) <= w {
-		return s
-	}
-	var b strings.Builder
-	used := 0
-	for _, r := range s {
-		rw := lipgloss.Width(string(r))
-		if used+rw > w-1 {
-			break
-		}
-		b.WriteRune(r)
-		used += rw
-	}
-	return b.String() + "…"
-}
-
 // previewLines is how many lines of each post the timeline list shows.
 const previewLines = 3
-
-// preview is the text shown for a post in the list: its text, then any
-// attachments and quoted post, so image-only posts still say something.
-// preview is the post's own text, attachments and link card as one paragraph (no
-// stray line breaks). URLs stay whole so the terminal can detect and open them.
-// A quoted post is left out; itemLines shows it on lines of its own.
-func preview(p bsky.Post) string {
-	parts := append([]string{p.Text}, p.Attach...)
-	if p.Link != nil {
-		parts = append(parts, cardLabel(*p.Link, p.Text))
-	}
-	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
-}
-
-// cardTitle is the page title to show, unless it is missing or the post's text
-// already says it.
-func cardTitle(c bsky.LinkCard, text string) string {
-	if c.Title == "" || strings.Contains(strings.ToLower(text), strings.ToLower(c.Title)) {
-		return ""
-	}
-	return c.Title
-}
-
-// cardLabel is the card in one line: "↗ Title https://…". The URL is left out when the
-// post's text already has it, and the title when the text already says it.
-func cardLabel(c bsky.LinkCard, text string) string {
-	parts := []string{"↗"}
-	if t := cardTitle(c, text); t != "" {
-		parts = append(parts, t)
-	}
-	if !strings.Contains(text, c.URI) {
-		parts = append(parts, c.URI)
-	}
-	if len(parts) == 1 { // the text has both: nothing left to add
-		return ""
-	}
-	return strings.Join(parts, " ")
-}
 
 // quoteLines is how many lines of a quoted post the list shows.
 const quoteLines = 2
@@ -1802,7 +1744,7 @@ func clip(text string, w, n int) []string {
 	lines := strings.Split(termtext.StripLinks(strings.Join(termtext.Wrap(text, w), "\n")), "\n")
 	if len(lines) > n {
 		lines = lines[:n]
-		lines[n-1] = truncateWidth(lines[n-1]+" …", w)
+		lines[n-1] = termtext.TruncateWidth(lines[n-1]+" …", w)
 	}
 	return lines
 }
@@ -1831,7 +1773,7 @@ func ageLink(it bsky.FeedItem, age string) string {
 // ageOf is how long ago s (RFC 3339) was, or "?".
 func ageOf(s string) string {
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return humanAge(time.Since(t))
+		return termtext.HumanAge(time.Since(t))
 	}
 	return "?"
 }
@@ -1895,13 +1837,13 @@ func (m model) itemLines(i, w int) []string {
 		add("kept", okStyle)
 	}
 	tailPlain, tail := strings.Join(tagsPlain, " "), strings.Join(tags, " ")
-	who = truncateWidth(who, max(w-(2+gw+5+1+1+lipgloss.Width(tailPlain)), 10))
+	who = termtext.TruncateWidth(who, max(w-(2+gw+5+1+1+lipgloss.Width(tailPlain)), 10))
 
 	// the post's own text, then the quoted post on lines of its own, both lined up
 	// under the author's name: lead (2) + age (5) + space = column 8
 	const indent = "      " // after the 2-column lead
 	bw := w - 2 - len(indent) - gw
-	text := clip(preview(it.Post), bw, previewLines)
+	text := clip(it.Post.Preview(), bw, previewLines)
 	quote := clip(strings.Join(strings.Fields(it.Post.Quote), " "), bw-2, quoteLines)
 	if len(text) == 0 && len(quote) == 0 {
 		text = []string{"(no text)"}
@@ -1965,7 +1907,7 @@ func renderPost(p bsky.Post, w int, full bool) []string {
 	}
 	age := "?"
 	if t, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
-		age = humanAge(time.Since(t))
+		age = termtext.HumanAge(time.Since(t))
 	}
 	lines := []string{dimStyle.Render(age + " ago" + kind)}
 	indent := "  "
@@ -1987,7 +1929,7 @@ func renderPost(p bsky.Post, w int, full bool) []string {
 		body(a, &dimStyle, "")
 	}
 	if p.Link != nil {
-		if l := cardLabel(*p.Link, p.Text); l != "" {
+		if l := p.Link.Label(p.Text); l != "" {
 			body(l, &dimStyle, "")
 		}
 	}

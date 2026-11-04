@@ -127,29 +127,9 @@ func TestPostViewShowsEngagementAndLink(t *testing.T) {
 	}
 }
 
-func TestLinkCards(t *testing.T) {
-	uri := "https://www.theatlantic.com/politics/archive/2026/11/x/1"
-	c := bsky.LinkCard{URI: uri, Title: "The Limits of Trump's Trickery"}
-	// the URL is always shown in full (terminals detect plain URLs), never twice
-	for text, want := range map[string]string{
-		"read this":                             "↗ The Limits of Trump's Trickery " + uri,
-		"see " + uri:                            "↗ The Limits of Trump's Trickery",
-		"the limits of trump's trickery":        "↗ " + uri,
-		"the limits of trump's trickery " + uri: "",
-	} {
-		if got := cardLabel(c, text); got != want {
-			t.Errorf("label(%q) = %q, want %q", text, got, want)
-		}
-	}
-	if got := cardLabel(bsky.LinkCard{URI: "https://bit.ly/3V270SA"}, ""); got != "↗ https://bit.ly/3V270SA" {
-		t.Errorf("untitled card = %q", got)
-	}
-
+func TestPostViewShowsLinkCardURL(t *testing.T) {
 	long := "https://www.washingtonpost.com/technology/2026/11/03/google-deepmind-staff-protest-lifetime-ban/"
 	p := bsky.Post{Text: "A big night " + long, Link: &bsky.LinkCard{URI: "https://bit.ly/3V270SA", Title: "The Limits of Trump's Midterm Trickery"}}
-	if got := preview(p); got != "A big night "+long+" ↗ The Limits of Trump's Midterm Trickery https://bit.ly/3V270SA" {
-		t.Errorf("preview should keep URLs whole: %q", got)
-	}
 	full := strings.Join(renderPost(p, 200, true), "\n")
 	if plain := termtext.StripANSI(termtext.StripLinks(full)); !strings.Contains(plain, "↗ The Limits of Trump's Midterm Trickery https://bit.ly/3V270SA") || strings.Contains(plain, "[link]") {
 		t.Errorf("post view card should show its URL:\n%s", plain)

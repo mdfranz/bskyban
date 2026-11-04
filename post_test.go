@@ -8,12 +8,6 @@ import (
 	"github.com/mdfranz/bskyban/internal/bsky"
 )
 
-func TestPostURL(t *testing.T) {
-	if got := postURL("at://did:plc:x/app.bsky.feed.post/3k"); got != "https://bsky.app/profile/did:plc:x/post/3k" {
-		t.Errorf("got %q", got)
-	}
-}
-
 func TestPostURI(t *testing.T) {
 	a := &cliApp{App: &app.App{Client: &bsky.Client{DID: "did:plc:me"}}}
 	for ref, want := range map[string]string{

@@ -602,7 +602,7 @@ func TestStackedLayoutFitsTheWindow(t *testing.T) {
 
 func TestHumanAgeShowsMinutes(t *testing.T) {
 	for d, want := range map[time.Duration]string{5 * time.Minute: "5m", 90 * time.Minute: "1h", 30 * time.Hour: "30h"} {
-		if got := humanAge(d); got != want {
+		if got := termtext.HumanAge(d); got != want {
 			t.Errorf("humanAge(%v) = %q, want %q", d, got, want)
 		}
 	}

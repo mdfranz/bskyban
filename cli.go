@@ -78,7 +78,7 @@ func (a *cliApp) cmdFeedList(ctx context.Context, pages int, backlog, asJSON boo
 		// fit the terminal exactly; when piped, don't truncate at all
 		line := fmt.Sprintf("%-32s via %-40s %s", p.Handle, "@"+strings.Join(r.By, ", @"), formatPost(r.Post, 0))
 		if tw := termWidth(a.stdout); tw > 0 {
-			line = truncateWidth(line, tw-1)
+			line = termtext.TruncateWidth(line, tw-1)
 		}
 		fmt.Fprintln(a.stdout, line)
 	}
@@ -156,7 +156,7 @@ func (a *cliApp) cmdList(ctx context.Context, args []string) error {
 			continue
 		}
 		fmt.Fprintf(a.stdout, "%-6s %-32s posts=%-5d followers=%-6d following=%-6d age=%-8s %s\n",
-			status, p.Handle, p.PostsCount, p.FollowersCount, p.FollowsCount, humanAge(p.Age()), p.DID)
+			status, p.Handle, p.PostsCount, p.FollowersCount, p.FollowsCount, termtext.HumanAge(p.Age()), p.DID)
 	}
 	return nil
 }
@@ -196,7 +196,7 @@ func (a *cliApp) cmdShow(ctx context.Context, args []string) error {
 		status = "new"
 	}
 	fmt.Fprintf(a.stdout, "%s (@%s)\nDID:       %s\nStatus:    %s\nCreated:   %s (%s)\nPosts:     %d\nFollowers: %d\nFollowing: %d\nAvatar:    %v\nURL:       https://bsky.app/profile/%s\n\n%s\n",
-		p.DisplayName, p.Handle, p.DID, status, p.CreatedAt, humanAge(p.Age()),
+		p.DisplayName, p.Handle, p.DID, status, p.CreatedAt, termtext.HumanAge(p.Age()),
 		p.PostsCount, p.FollowersCount, p.FollowsCount, p.Avatar != "", p.Handle, termtext.LinkifyIfTTY(p.Description))
 	posts, err := a.Client.GetRecentPosts(ctx, p.DID, 5)
 	if err != nil {
@@ -260,7 +260,7 @@ func (a *cliApp) cmdPostsList(ctx context.Context, n int, asJSON bool) error {
 			}
 			line := fmt.Sprintf("%-14s %s", rkey, formatPost(it.Post, 0))
 			if tw := termWidth(a.stdout); tw > 0 {
-				line = truncateWidth(line, tw-1)
+				line = termtext.TruncateWidth(line, tw-1)
 			}
 			fmt.Fprintln(a.stdout, line)
 		}
@@ -297,7 +297,7 @@ func (a *cliApp) cmdPost(ctx context.Context, args []string) (err error) {
 	if n := uniseg.GraphemeClusterCount(text); n > bsky.MaxPostGraphemes {
 		return fmt.Errorf("post is %d characters; the limit is %d", n, bsky.MaxPostGraphemes)
 	}
-	ev := store.AuditEvent{Action: "post", DID: a.Client.DID, Handle: a.Client.Handle, DryRun: *dry, Detail: truncateWidth(strings.Join(strings.Fields(text), " "), 200)}
+	ev := store.AuditEvent{Action: "post", DID: a.Client.DID, Handle: a.Client.Handle, DryRun: *dry, Detail: termtext.TruncateWidth(strings.Join(strings.Fields(text), " "), 200)}
 	defer func() {
 		ev.OK = err == nil
 		if err != nil {
@@ -314,7 +314,7 @@ func (a *cliApp) cmdPost(ctx context.Context, args []string) (err error) {
 		return err
 	}
 	ev.Record = uri
-	fmt.Fprintf(a.stdout, "posted %s\n", postURL(uri))
+	fmt.Fprintf(a.stdout, "posted %s\n", bsky.PostURL(uri))
 	return nil
 }
 
@@ -343,7 +343,7 @@ func (a *cliApp) cmdDeletePost(ctx context.Context, args []string) error {
 }
 
 func (a *cliApp) deletePost(ctx context.Context, ref string, dry bool) (err error) {
-	ev := store.AuditEvent{Action: "delete-post", DID: a.Client.DID, Handle: a.Client.Handle, DryRun: dry, Detail: truncateWidth(termtext.Sanitize(ref), 200)}
+	ev := store.AuditEvent{Action: "delete-post", DID: a.Client.DID, Handle: a.Client.Handle, DryRun: dry, Detail: termtext.TruncateWidth(termtext.Sanitize(ref), 200)}
 	defer func() {
 		ev.OK = err == nil
 		if err != nil {
@@ -357,13 +357,13 @@ func (a *cliApp) deletePost(ctx context.Context, ref string, dry bool) (err erro
 	}
 	ev.Record = uri
 	if dry {
-		fmt.Fprintf(a.stdout, "[dry-run] would delete post %s\n", postURL(uri))
+		fmt.Fprintf(a.stdout, "[dry-run] would delete post %s\n", bsky.PostURL(uri))
 		return nil
 	}
 	if err := a.Client.DeletePost(ctx, uri); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.stdout, "deleted post %s\n", postURL(uri))
+	fmt.Fprintf(a.stdout, "deleted post %s\n", bsky.PostURL(uri))
 	return nil
 }
 
@@ -436,7 +436,7 @@ func (a *cliApp) cmdLike(ctx context.Context, cmd string, args []string) error {
 }
 
 func (a *cliApp) likePost(ctx context.Context, cmd, ref string, dry bool) (err error) {
-	ev := store.AuditEvent{Action: cmd, DID: a.Client.DID, Handle: a.Client.Handle, DryRun: dry, Detail: truncateWidth(termtext.Sanitize(ref), 200)}
+	ev := store.AuditEvent{Action: cmd, DID: a.Client.DID, Handle: a.Client.Handle, DryRun: dry, Detail: termtext.TruncateWidth(termtext.Sanitize(ref), 200)}
 	defer func() {
 		ev.OK = err == nil
 		if err != nil {
@@ -459,33 +459,23 @@ func (a *cliApp) likePost(ctx context.Context, cmd, ref string, dry bool) (err e
 	switch {
 	case cmd == "like" && like != "":
 		ev.Detail, ev.Record = "already liked", like
-		fmt.Fprintf(a.stdout, "already liked %s\n", postURL(uri))
+		fmt.Fprintf(a.stdout, "already liked %s\n", bsky.PostURL(uri))
 	case cmd == "unlike" && like == "":
 		ev.Detail = "not liked"
-		fmt.Fprintf(a.stdout, "you haven't liked %s\n", postURL(uri))
+		fmt.Fprintf(a.stdout, "you haven't liked %s\n", bsky.PostURL(uri))
 	case cmd == "like":
-		fmt.Fprintf(a.stdout, "%slike %s\n", prefix, postURL(uri))
+		fmt.Fprintf(a.stdout, "%slike %s\n", prefix, bsky.PostURL(uri))
 		if !dry {
 			ev.Record, err = a.Client.Like(ctx, post)
 		}
 	default:
 		ev.Record = like
-		fmt.Fprintf(a.stdout, "%sunlike %s\n", prefix, postURL(uri))
+		fmt.Fprintf(a.stdout, "%sunlike %s\n", prefix, bsky.PostURL(uri))
 		if !dry {
 			err = a.Client.Unlike(ctx, like)
 		}
 	}
 	return err
-}
-
-// postURL turns at://did/app.bsky.feed.post/rkey into its bsky.app link.
-func postURL(uri string) string {
-	if i := strings.LastIndex(uri, "/"); i >= 0 && strings.HasPrefix(uri, "at://") {
-		if parts := strings.Split(strings.TrimPrefix(uri, "at://"), "/"); len(parts) == 3 {
-			return "https://bsky.app/profile/" + parts[0] + "/post/" + uri[i+1:]
-		}
-	}
-	return uri
 }
 
 func (a *cliApp) act(ctx context.Context, cmd, id string, dry bool) (err error) {
@@ -624,7 +614,7 @@ func formatPost(p bsky.Post, max int) string {
 	}
 	age := "?"
 	if t, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
-		age = humanAge(time.Since(t))
+		age = termtext.HumanAge(time.Since(t))
 	}
 	text := strings.Join(strings.Fields(termtext.Sanitize(p.Text)), " ")
 	if r := []rune(text); max > 0 && len(r) > max {
@@ -662,18 +652,3 @@ func termWidth(w io.Writer) int {
 }
 
 func normalizeActor(s string) string { return strings.TrimPrefix(strings.TrimSpace(s), "@") }
-
-func humanAge(d time.Duration) string {
-	switch {
-	case d <= 0:
-		return "?"
-	case d < time.Hour:
-		return fmt.Sprintf("%dm", int(d.Minutes()))
-	case d < 48*time.Hour:
-		return fmt.Sprintf("%dh", int(d.Hours()))
-	case d < 90*24*time.Hour:
-		return fmt.Sprintf("%dd", int(d.Hours()/24))
-	default:
-		return fmt.Sprintf("%dmo", int(d.Hours()/24/30))
-	}
-}

@@ -55,7 +55,7 @@ func postLinks(it bsky.FeedItem) []pickLink {
 		if h, _, ok := strings.Cut(p.Quote, ":"); ok && strings.HasPrefix(h, "@") {
 			who = h + "'s quoted post"
 		}
-		add(who, postURL(p.QuoteURI), false)
+		add(who, bsky.PostURL(p.QuoteURI), false)
 	}
 	for _, mm := range mentionRe.FindAllStringSubmatch(p.Text, -1) {
 		add("@"+mm[1], "https://bsky.app/profile/"+mm[1], false)
@@ -126,7 +126,7 @@ func defaultPick(links []pickLink) int {
 func (m model) pickerLines() []string {
 	items := make([]string, len(m.picking))
 	for i, l := range m.picking {
-		items[i] = fmt.Sprintf("%d %s", i+1, truncateWidth(termtext.Sanitize(l.label), 40))
+		items[i] = fmt.Sprintf("%d %s", i+1, termtext.TruncateWidth(termtext.Sanitize(l.label), 40))
 	}
 	return wrapItems(append([]string{"open:"}, items...), m.width)
 }
