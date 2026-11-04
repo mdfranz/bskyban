@@ -171,7 +171,7 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 | `n` | write a new post | write a new post |
 | `d` | delete your own post (press twice) | delete your own post (press twice) |
 | `Tab` | switch tab | switch tab |
-| `R` | check for new posts / insert them | check for new posts / insert them |
+| `R` | go to the top, check for new posts / insert them | go to the top, check for new posts / insert them |
 | `q` | quit | quit |
 
 In the feed `h` is the heart and `l` does nothing: use the arrow keys to move. The vim-style `h`/`l` pair only applies to the follower review above.
@@ -198,9 +198,9 @@ timeline loads as you near the end.
 posts. If you are on the first post of the list they are added straight away and the
 newest becomes the selection. Otherwise they are *not* inserted while you read: the
 header just shows `Following (+3 new)`, so the list never shifts under you. Press `R` to
-insert them at the top (with `--fancy`, inserted posts get a coloured bar and a `new`
-tag that fade out over about 2 seconds); the post you were on stays selected (from the very top of the list, the
-newest post is selected instead). `R` also refreshes right away if nothing is waiting.
+jump to the top of the list (closing any open post) and insert them there, with the newest
+selected (with `--fancy`, inserted posts get a coloured bar and a `new` tag that fade out
+over about 2 seconds). `R` also refreshes right away if nothing is waiting.
 Newly reposted authors you haven't handled are added to the end of the Reposts queue
 (its count grows) without moving the account you're reviewing. A failed check shows
 `⚠ refresh failed` in the header and clears itself on the next good one. One check is

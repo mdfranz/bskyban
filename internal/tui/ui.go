@@ -828,9 +828,13 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openImagesKey()
 	}
 	if key == "R" && m.timeline != nil {
+		// R takes you to the top of the feed, where new posts land: the newest is selected.
+		m.cur, m.listTop, m.inPost = 0, 0, false
+		if m.active() == tabFollowing {
+			m.scroll = 0
+		}
 		if len(m.newPosts) > 0 {
 			m = m.applyPending() // what the header announced; no need to wait for or start a check
-			m.scroll = 0
 			m, anim := m.startAnim()
 			return m, tea.Batch(m.prefetch(), anim)
 		}
