@@ -693,6 +693,15 @@ func formatPost(p Post, max int) string {
 	if len(p.Attach) > 0 {
 		text = strings.TrimSpace(text + " " + terminalText(strings.Join(p.Attach, " ")))
 	}
+	if c := p.Link; c != nil { // full URL here: CLI output is copied and piped
+		card := "↗ " + c.URI
+		if c.Title != "" && !strings.Contains(p.Text, c.URI) {
+			card = "↗ " + c.Title + " " + c.URI
+		} else if c.Title != "" {
+			card = "↗ " + c.Title
+		}
+		text = strings.TrimSpace(text + " " + terminalText(card))
+	}
 	if text == "" {
 		text = "(no text)"
 	}

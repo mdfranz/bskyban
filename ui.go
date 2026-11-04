@@ -878,16 +878,26 @@ func (m model) applyLiked(msg likedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.audit(ev)
+	// your like adds to (or comes off) the count shown, until the next fetch
+	setLike := func(x *FeedItem) {
+		switch {
+		case x.Like == "" && msg.like != "":
+			x.Stats.Likes++
+		case x.Like != "" && msg.like == "" && x.Stats.Likes > 0:
+			x.Stats.Likes--
+		}
+		x.Like = msg.like
+	}
 	for did, rc := range m.ctxs {
 		if rc.Item.URI == it.URI {
-			rc.Item.Like = msg.like
+			setLike(&rc.Item)
 			m.ctxs[did] = rc
 		}
 	}
 	for _, list := range [][]FeedItem{m.items, m.newPosts} {
 		for i := range list {
 			if list[i].URI == it.URI {
-				list[i].Like = msg.like
+				setLike(&list[i])
 			}
 		}
 	}
@@ -1351,7 +1361,6 @@ func (m model) profilePanel(cw int, pos string) []string {
 	return append(lines, dimStyle.Render("(no bio)"))
 }
 
-// recentLines lists the account's latest posts in full.
 // currentPost marks the post you are on: a heading and an accent bar down its side,
 // so it stands apart from the author's other posts listed below it.
 func currentPost(title string, p Post, it FeedItem, cw int) []string {
@@ -1363,10 +1372,38 @@ func currentPost(title string, p Post, it FeedItem, cw int) []string {
 		}
 		lines = append(lines, bar+l)
 	}
-	if it.Like != "" {
-		lines = append(lines, bar+errStyle.Render("♥ you liked this"))
+	if it.URI != "" {
+		lines = append(lines, bar+statsLine(it))
 	}
 	return append(lines, "", dimStyle.Render(strings.Repeat("─", max(cw-1, 1))), "")
+}
+
+// statsLine is the post's engagement counts and a link to it on bsky.app.
+func statsLine(it FeedItem) string {
+	count := func(n int, one string) string {
+		switch {
+		case n == 1:
+			return "1 " + one
+		case one == "reply":
+			return fmt.Sprintf("%d replies", n)
+		}
+		return fmt.Sprintf("%d %ss", n, one)
+	}
+	s := it.Stats
+	likes := dimStyle.Render(count(s.Likes, "like"))
+	if it.Like != "" {
+		likes = errStyle.Render("♥ " + count(s.Likes, "like") + " (you liked this)")
+	}
+	rest := dimStyle.Render(" · " + count(s.Reposts, "repost") + " · " + count(s.Replies, "reply") + " · " + count(s.Quotes, "quote") + " · ")
+	return likes + rest + accentStyle.Render(osc8(postLink(it), "open post ↗"))
+}
+
+// postLink is the post's bsky.app address, using the author's handle when known.
+func postLink(it FeedItem) string {
+	if it.Author.Handle == "" {
+		return postURL(it.URI)
+	}
+	return "https://bsky.app/profile/" + it.Author.Handle + "/post/" + it.URI[strings.LastIndex(it.URI, "/")+1:]
 }
 
 // recentLines lists the author's latest posts, leaving out cur (shown above as the current post).
@@ -1553,13 +1590,51 @@ func (m model) hintLines() []string {
 
 func (m model) hint() string { return strings.Join(m.hintLines(), "\n") }
 
+// View draws the screen. The status and key hints are pinned to the bottom rows:
+// the content above is padded (or, if it is ever too tall, cut) to fit the window.
 func (m model) View() string {
 	var b strings.Builder
 	b.WriteString(m.tabBar() + "\n\n")
 	if m.composing {
 		b.WriteString(m.composeView())
-		return b.String()
+	} else {
+		b.WriteString(m.content())
 	}
+
+	var bottom []string
+	if m.err != nil {
+		bottom = append(bottom, errStyle.Render("error: "+terminalText(m.err.Error())))
+	}
+	switch {
+	case m.busy && m.composing:
+		bottom = append(bottom, m.spin.View()+" posting…")
+	case m.busy:
+		bottom = append(bottom, m.spin.View()+" working…")
+	case m.moreBusy:
+		bottom = append(bottom, dimStyle.Render("loading more…"))
+	case m.status != "" && !m.composing:
+		bottom = append(bottom, warnStyle.Render(m.status))
+	}
+	bottom = append(bottom, styleLinesJoin(m.hintLines(), dimStyle))
+
+	if m.height <= 0 { // size not known yet
+		return b.String() + "\n" + strings.Join(bottom, "\n") + "\n"
+	}
+	bottom = strings.Split(strings.Join(bottom, "\n"), "\n") // hints may wrap onto several lines
+	top := strings.Split(strings.TrimRight(b.String(), "\n"), "\n")
+	room := max(m.height-len(bottom)-1, 1) // one blank row between content and footer
+	if len(top) > room {
+		top = top[:room]
+	}
+	for len(top) < room {
+		top = append(top, "")
+	}
+	return strings.Join(append(append(top, ""), bottom...), "\n")
+}
+
+// content is the active tab's main area.
+func (m model) content() string {
+	var b strings.Builder
 	switch m.active() {
 	case tabCandidates:
 		switch {
@@ -1582,23 +1657,11 @@ func (m model) View() string {
 			b.WriteString(m.listView())
 		}
 	}
-	b.WriteString("\n")
-	if m.err != nil {
-		b.WriteString(errStyle.Render("error: "+terminalText(m.err.Error())) + "\n")
-	}
-	switch {
-	case m.busy:
-		b.WriteString(m.spin.View() + " working…\n")
-	case m.moreBusy:
-		b.WriteString(dimStyle.Render("loading more…") + "\n")
-	case m.status != "":
-		b.WriteString(warnStyle.Render(m.status) + "\n")
-	}
-	b.WriteString(styleLinesJoin(m.hintLines(), dimStyle) + "\n")
 	return b.String()
 }
 
-// composeView is the new-post screen: the text box, a length counter and any error.
+// composeView is the new-post screen: the text box and a length counter (errors
+// and hints are in the footer View pins to the bottom).
 func (m model) composeView() string {
 	var b strings.Builder
 	if r := m.replyTo; r != nil {
@@ -1623,14 +1686,7 @@ func (m model) composeView() string {
 	} else {
 		count = dimStyle.Render(count)
 	}
-	b.WriteString(count + "\n\n")
-	if m.err != nil {
-		b.WriteString(errStyle.Render("error: "+terminalText(m.err.Error())) + "\n")
-	}
-	if m.busy {
-		b.WriteString(m.spin.View() + " posting…\n")
-	}
-	b.WriteString(styleLinesJoin(m.hintLines(), dimStyle) + "\n")
+	b.WriteString(count + "\n")
 	return b.String()
 }
 
@@ -1661,11 +1717,45 @@ const previewLines = 3
 
 // preview is the text shown for a post in the list: its text, then any
 // attachments and quoted post, so image-only posts still say something.
-// preview is the post's own text and attachments as one paragraph (no stray line
-// breaks). A quoted post is left out; itemLines shows it on lines of its own.
+// preview is the post's own text, attachments and link card as one paragraph (no
+// stray line breaks), with long URLs shortened. A quoted post is left out;
+// itemLines shows it on lines of its own.
 func preview(p Post) string {
-	parts := append([]string{p.Text}, p.Attach...)
+	text := p.Text
+	if p.Link != nil { // the card says where it goes; no need for the URL in the text too
+		text = strings.Replace(text, p.Link.URI, "", 1)
+	}
+	parts := append([]string{shortenURLs(text)}, p.Attach...)
+	if p.Link != nil {
+		parts = append(parts, p.Link.label(p.Text))
+	}
 	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+}
+
+// cardTitle is what the card should call the page: its title, unless the post's
+// text already says it (then just where it goes).
+func (c linkCard) cardTitle(text string) string {
+	if c.Title == "" || strings.Contains(strings.ToLower(text), strings.ToLower(c.Title)) {
+		return ""
+	}
+	return c.Title
+}
+
+// label is the card in one line: "↗ Title · site"; just "↗ site" when the post's
+// text already gives the title, and the short URL when the page has no title.
+func (c linkCard) label(text string) string {
+	return "↗ " + c.name(text)
+}
+
+// name is the card's text without the arrow (see label).
+func (c linkCard) name(text string) string {
+	switch t := c.cardTitle(text); {
+	case t != "":
+		return t + " · " + urlHost(c.URI)
+	case c.Title != "":
+		return urlHost(c.URI)
+	}
+	return shortURL(c.URI)
 }
 
 // quoteLines is how many lines of a quoted post the list shows.
@@ -1685,14 +1775,15 @@ func clip(text string, w, n int) []string {
 	return lines
 }
 
-// inThread reports whether item i is a reply in the same thread as the item above
-// it, so the list draws them joined. Only adjacent posts are joined; nothing moves.
+// inThread reports whether item i answers the post right above it, so the list
+// indents it beneath that post. Replies to anything else (even in the same thread)
+// stay at the normal indent; nothing moves.
 func (m model) inThread(i int) bool {
 	if i <= 0 || i >= len(m.items) {
 		return false
 	}
 	it := m.items[i]
-	return it.Post.Reply && it.By == "" && it.threadRoot() == m.items[i-1].threadRoot()
+	return it.Post.Reply && it.By == "" && it.Parent.URI != "" && it.Parent.URI == m.items[i-1].URI
 }
 
 // ageOf is how long ago s (RFC 3339) was, or "?".
@@ -1719,9 +1810,9 @@ func (m model) itemLines(i, w int) []string {
 		age = ageOf(it.RepostedAt) // when it reached your timeline; the post's own age is a tag
 	}
 	threaded := m.inThread(i)
-	gutter, gw := "", 0 // joins a reply to the post above it
+	gutter, gw := "", 0 // a reply right under its thread is indented beneath it
 	if threaded {
-		gutter, gw = "│ ", 2
+		gutter, gw = "    ", 4
 	}
 	name := it.Author.DisplayName
 	if name == "" {
@@ -1734,13 +1825,17 @@ func (m model) itemLines(i, w int) []string {
 		tags = append(tags, st.Render(plain))
 	}
 	if it.By != "" {
-		add("↻ @"+it.By, accentStyle)
+		add("↻ reposted by @"+it.By, accentStyle)
 		if posted := ageOf(it.Post.CreatedAt); it.RepostedAt != "" && posted != age {
-			add("· posted "+posted, dimStyle)
+			add("· written "+posted+" ago", dimStyle)
 		}
 	}
 	if it.Post.Reply {
-		add("reply", dimStyle)
+		if h := it.Post.ParentHandle; h != "" {
+			add("↳ replying to @"+h, dimStyle)
+		} else {
+			add("reply", dimStyle)
+		}
 	}
 	if it.Like != "" {
 		add("♥", errStyle)
@@ -1784,7 +1879,7 @@ func (m model) itemLines(i, w int) []string {
 		if isFresh {
 			lead = fresh.Render("┃") + " "
 		}
-		lead += dimStyle.Render(gutter)
+		lead += gutter
 		header := fmt.Sprintf("%s%s %s", lead, dimStyle.Render(fmt.Sprintf("%-5s", age)), titleStyle.Render(who))
 		if tail != "" {
 			header += " " + tail
@@ -1796,9 +1891,6 @@ func (m model) itemLines(i, w int) []string {
 		for _, l := range quote {
 			lines = append(lines, lead+indent+accentStyle.Render("▎ ")+dimStyle.Render(l))
 		}
-	}
-	if m.inThread(i + 1) {
-		return append(lines, "  "+dimStyle.Render("│")) // the next post continues this thread
 	}
 	return append(lines, "")
 }
@@ -1851,6 +1943,21 @@ func renderPost(p Post, w int, full bool) []string {
 	}
 	for _, a := range p.Attach {
 		body(a, &dimStyle, "")
+	}
+	if c := p.Link; c != nil { // the title links to the page; the site says where it goes
+		title := c.cardTitle(p.Text)
+		named := title != ""
+		if !named {
+			title = c.name(p.Text)
+		}
+		tl := wrapText("↗ "+title, w-len(indent)-len(urlHost(c.URI))-3)
+		for i, l := range tl {
+			l = accentStyle.Render(osc8(c.URI, oscRe.ReplaceAllString(l, "")))
+			if i == len(tl)-1 && named {
+				l += dimStyle.Render(" · " + urlHost(c.URI))
+			}
+			lines = append(lines, indent+l)
+		}
 	}
 	if p.Quote != "" {
 		body(p.Quote, &dimStyle, "▎ ")

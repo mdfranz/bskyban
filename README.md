@@ -102,8 +102,12 @@ bskyban feed --list [--json] # print the Reposts candidates instead
 
 **Following** is your home timeline (accounts you follow). Each post shows up to three
 lines, with a quoted post on up to two lines of its own (`▎`). A repost is aged by when it
-was reposted (`↻ @who · posted 8m` gives the post's own age). Replies right below a post in
-the same thread are joined to it with a `│` line; open one to see it in full next to its author's profile, including
+was reposted (`↻ reposted by @who · written 8m ago` gives the post's own age), and a reply
+names who it answers (`↳ replying to @who`). Link previews show as
+`↗ Title · site` (the title is a clickable link in the post view), and long URLs in the
+list are shortened. Replies right below a post in
+the same thread are indented beneath it; open one to see it in full (with its like, repost, reply and quote counts and an
+`open post ↗` link to bsky.app) next to its author's profile, including
 the parent of a reply, quoted posts, image links and recent posts by the author.
 
 | Key | List | Post view |

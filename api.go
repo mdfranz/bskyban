@@ -198,7 +198,8 @@ type Post struct {
 	CreatedAt string
 	Repost    bool
 	Reply     bool
-	Attach    []string // one-line descriptions of images, links, video, quotes
+	Attach    []string  // one-line descriptions of images, video, quotes
+	Link      *linkCard // link preview card, if the post has one
 
 	// Only set for posts that come with hydrated context (timeline / author feeds).
 	Quote        string   // "@handle: text" of a quoted post
@@ -241,6 +242,33 @@ func expandLinks(text string, facets []facet) string {
 	return text
 }
 
+// linkCard is a post's link preview: where it goes and the page title.
+type linkCard struct{ URI, Title string }
+
+// embedLink returns the post's link card, if its embed has one.
+func embedLink(raw json.RawMessage) *linkCard {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var e struct {
+		Type     string `json:"$type"`
+		External struct {
+			URI, Title string
+		} `json:"external"`
+		Media json.RawMessage `json:"media"`
+	}
+	if json.Unmarshal(raw, &e) != nil {
+		return nil
+	}
+	switch {
+	case strings.HasPrefix(e.Type, "app.bsky.embed.external") && e.External.URI != "":
+		return &linkCard{URI: e.External.URI, Title: strings.Join(strings.Fields(e.External.Title), " ")}
+	case e.Type == "app.bsky.embed.recordWithMedia":
+		return embedLink(e.Media)
+	}
+	return nil
+}
+
 // describeEmbed turns a raw post embed into short one-line descriptions.
 func describeEmbed(raw json.RawMessage) []string {
 	if len(raw) == 0 || string(raw) == "null" {
@@ -280,12 +308,6 @@ func describeEmbed(raw json.RawMessage) []string {
 			s += " alt: " + alt
 		}
 		out = append(out, s)
-	case strings.HasPrefix(e.Type, "app.bsky.embed.external"):
-		s := "[link]"
-		if e.External.Title != "" {
-			s += " " + e.External.Title
-		}
-		out = append(out, s+" "+e.External.URI)
 	case e.Type == "app.bsky.embed.recordWithMedia":
 		out = append(out, describeEmbed(e.Media)...)
 		out = append(out, "[quote post]")
@@ -312,8 +334,9 @@ func (c *Client) GetRecentPosts(ctx context.Context, actor string, limit int) ([
 // feedEntry is one app.bsky.feed.defs#feedViewPost.
 type feedEntry struct {
 	Post struct {
-		URI    string `json:"uri"`
-		CID    string `json:"cid"`
+		URI string `json:"uri"`
+		CID string `json:"cid"`
+		postStats
 		Viewer struct {
 			Like string `json:"like"`
 		} `json:"viewer"`
@@ -398,6 +421,7 @@ func (e feedEntry) toPost() Post {
 		Repost:       e.isRepost(),
 		Reply:        len(r.Reply) > 0 && string(r.Reply) != "null",
 		Attach:       describeEmbed(r.Embed),
+		Link:         embedLink(r.Embed),
 		ParentHandle: e.Reply.Parent.Author.Handle,
 		ParentText:   e.Reply.Parent.Record.Text,
 	}
@@ -431,16 +455,18 @@ type replyRef struct {
 	Parent postRef `json:"parent"`
 }
 
-// threadRoot is the root of the thread the post belongs to, or zero if it is not a reply.
-func (e feedEntry) threadRoot() postRef {
+// replyRefs is where the post sits in its thread (zero if it is not a reply).
+func (e feedEntry) replyRefs() replyRef {
 	var r replyRef
 	_ = json.Unmarshal(e.Post.Record.Reply, &r)
-	return r.Root
+	return r
 }
 
 // item turns a feed entry into a timeline item.
 func (e feedEntry) item() FeedItem {
-	return FeedItem{Post: e.toPost(), Author: e.Post.Author, URI: e.Post.URI, CID: e.Post.CID, Root: e.threadRoot(), Like: e.Post.Viewer.Like}
+	r := e.replyRefs()
+	return FeedItem{Post: e.toPost(), Author: e.Post.Author, URI: e.Post.URI, CID: e.Post.CID, Root: r.Root, Parent: r.Parent,
+		Like: e.Post.Viewer.Like, Stats: e.Post.postStats}
 }
 
 // FeedItem is one timeline entry: a post, its author, and who reposted it (if anyone).
@@ -451,17 +477,19 @@ type FeedItem struct {
 	URI    string // the post's AT URI
 	CID    string
 	Root   postRef // thread root when the post is a reply
+	Parent postRef // the post it answers, when it is a reply
 	Like   string  // AT URI of your like of this post, if you liked it
 
 	RepostedAt string // when By reposted it (RFC 3339), for reposts
+	Stats      postStats
 }
 
-// threadRoot is the URI of the thread this item belongs to: its root, or itself.
-func (it FeedItem) threadRoot() string {
-	if it.Root.URI != "" {
-		return it.Root.URI
-	}
-	return it.URI
+// postStats are a post's engagement counts as the server reported them.
+type postStats struct {
+	Likes   int `json:"likeCount"`
+	Reposts int `json:"repostCount"`
+	Replies int `json:"replyCount"`
+	Quotes  int `json:"quoteCount"`
 }
 
 // replyTo is the reply reference for answering this post.

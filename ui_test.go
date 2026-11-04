@@ -432,7 +432,7 @@ func followingModel(t *testing.T) (model, *fakePDS) {
 func TestFollowingListAndPostView(t *testing.T) {
 	m, _ := followingModel(t)
 	v := m.View()
-	for _, w := range []string{"Following", "Friend (@friend.bsky.social)", "hello world", "↻ @friend.bsky.social", "enter open"} {
+	for _, w := range []string{"Following", "Friend (@friend.bsky.social)", "hello world", "↻ reposted by @friend.bsky.social", "enter open"} {
 		if !strings.Contains(v, w) {
 			t.Errorf("list view missing %q:\n%s", w, v)
 		}
