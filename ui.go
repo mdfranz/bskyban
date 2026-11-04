@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mdfranz/bskyban/internal/app"
 	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/store"
 	"github.com/mdfranz/bskyban/internal/termtext"
@@ -34,7 +35,7 @@ const (
 type (
 	loadedMsg struct {
 		list []bsky.Profile
-		ctxs map[string]repostCtx
+		ctxs map[string]app.RepostCtx
 		err  error
 	}
 	followingMsg struct {
@@ -95,7 +96,7 @@ type undoEntry struct {
 }
 
 type model struct {
-	a         *app
+	a         *app.App
 	title     string
 	candLabel string
 	loader    loadFunc
@@ -104,7 +105,7 @@ type model struct {
 	tab       int
 
 	// candidates tab
-	ctxs    map[string]repostCtx // how each candidate reached you (feed mode)
+	ctxs    map[string]app.RepostCtx // how each candidate reached you (feed mode)
 	list    []bsky.Profile
 	idx     int
 	loading bool
@@ -153,12 +154,12 @@ type model struct {
 }
 
 // loadFunc returns the candidates to review, plus optional per-candidate context.
-type loadFunc func(ctx context.Context) ([]bsky.Profile, map[string]repostCtx, error)
+type loadFunc func(ctx context.Context) ([]bsky.Profile, map[string]app.RepostCtx, error)
 
 // timelineFunc returns one page of the home timeline and the next cursor.
 type timelineFunc func(ctx context.Context, cursor string) ([]bsky.FeedItem, string, error)
 
-func newModel(a *app, title string, load loadFunc) model {
+func newModel(a *app.App, title string, load loadFunc) model {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	label := "Reposts"
@@ -174,7 +175,7 @@ func newModel(a *app, title string, load loadFunc) model {
 }
 
 // newFeedModel adds a Following tab (your timeline) in front of the repost-author tab.
-func newFeedModel(a *app, load loadFunc, tl timelineFunc) model {
+func newFeedModel(a *app.App, load loadFunc, tl timelineFunc) model {
 	m := newModel(a, "feed", load)
 	m.timeline = tl
 	m.tabs = []tabID{tabFollowing, tabCandidates}
@@ -187,8 +188,8 @@ func newFeedModel(a *app, load loadFunc, tl timelineFunc) model {
 
 // newPostsModel is the feed browser limited to your own posts, with n to write
 // one and d to delete the selected one.
-func newPostsModel(a *app, tl timelineFunc) model {
-	m := newFeedModel(a, func(context.Context) ([]bsky.Profile, map[string]repostCtx, error) { return nil, nil, nil }, tl)
+func newPostsModel(a *app.App, tl timelineFunc) model {
+	m := newFeedModel(a, func(context.Context) ([]bsky.Profile, map[string]app.RepostCtx, error) { return nil, nil, nil }, tl)
 	m.title = "posts"
 	m.tabs = []tabID{tabFollowing}
 	m.loading = false
@@ -363,7 +364,7 @@ func (m model) mergeCandidates(items []bsky.FeedItem) model {
 		return m
 	}
 	for _, it := range items {
-		if it.By == "" || !m.a.isNew(it.Author, m.backlog) {
+		if it.By == "" || !m.a.IsNew(it.Author, m.backlog) {
 			continue
 		}
 		rc, seen := m.ctxs[it.Author.DID]
@@ -393,7 +394,7 @@ func (m model) fetchProfile(did string) tea.Cmd {
 	}
 	m.profiles[did] = nil // mark in flight
 	m.posts[did] = nil
-	c := m.a.c
+	c := m.a.Client
 	return tea.Batch(
 		func() tea.Msg {
 			p, err := c.GetProfile(context.Background(), did)
@@ -486,7 +487,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if manual {
 					detail = "manual refresh (R)"
 				}
-				m.audit(store.AuditEvent{Action: "refresh", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following",
+				m.audit(store.AuditEvent{Action: "refresh", DID: m.a.Client.DID, Handle: m.a.Client.Handle, Source: "tui:following",
 					Detail: detail, Error: msg.err.Error()})
 			}
 			if manual {
@@ -570,12 +571,12 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 	did := e.profile.DID
 	if msg.isUndo {
 		if e.prev != nil {
-			err = m.a.st.Put(did, *e.prev)
+			err = m.a.State.Put(did, *e.prev)
 		} else {
-			err = m.a.st.Delete(did)
+			err = m.a.State.Delete(did)
 		}
 	} else {
-		err = m.a.st.Set(did, e.profile.Handle, e.decision)
+		err = m.a.State.Set(did, e.profile.Handle, e.decision)
 	}
 	if err != nil {
 		m.pending = &msg
@@ -607,7 +608,7 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 		m.status = fmt.Sprintf("undid %s for @%s", e.decision, e.profile.Handle)
 	} else {
 		delete(m.records, did)
-		if isRemote(e.decision) {
+		if app.IsRemote(e.decision) {
 			m.records[did] = msg.newURI
 		}
 		e.record = msg.newURI
@@ -631,7 +632,7 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 
 // audit appends to the audit log; a failure to log is shown, never swallowed.
 func (m *model) audit(ev store.AuditEvent) {
-	if err := m.a.audit.Log(ev); err != nil && m.err == nil {
+	if err := m.a.Audit.Log(ev); err != nil && m.err == nil {
 		m.err = fmt.Errorf("audit log: %w", err)
 	}
 }
@@ -678,7 +679,7 @@ func (m model) auditEvent(msg actMsg) store.AuditEvent {
 	}
 	if msg.isUndo {
 		ev.Action, ev.Detail, ev.Record = "undo", "undid "+e.decision, msg.newURI
-		if isRemote(e.decision) {
+		if app.IsRemote(e.decision) {
 			ev.Record = e.record // the block/follow record that was removed
 		}
 		ev.Prev = e.decision
@@ -691,7 +692,7 @@ func (m model) auditEvent(msg actMsg) store.AuditEvent {
 func (m model) auditEvents(msg actMsg) []store.AuditEvent {
 	e := msg.undo
 	main := m.auditEvent(msg)
-	if !msg.isUndo && e.prev != nil && isRemote(e.prev.Decision) && e.prev.Decision != e.decision {
+	if !msg.isUndo && e.prev != nil && app.IsRemote(e.prev.Decision) && e.prev.Decision != e.decision {
 		lift := main
 		lift.Action, lift.Detail, lift.Record = liftAction[e.prev.Decision], "lifted by "+e.decision, ""
 		return []store.AuditEvent{lift, main}
@@ -810,7 +811,7 @@ func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.busy, m.err = true, nil
-		c := m.a.c
+		c := m.a.Client
 		var reply *bsky.ReplyRef
 		if m.replyTo != nil {
 			reply = m.replyTo.ReplyTo()
@@ -829,7 +830,7 @@ func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 // applyPosted logs a finished post and pulls it into the timeline.
 func (m model) applyPosted(msg postedMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
-	ev := store.AuditEvent{Action: "post", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following", OK: msg.err == nil, Record: msg.uri,
+	ev := store.AuditEvent{Action: "post", DID: m.a.Client.DID, Handle: m.a.Client.Handle, Source: "tui:following", OK: msg.err == nil, Record: msg.uri,
 		Detail: truncateWidth(strings.Join(strings.Fields(msg.text), " "), 200)}
 	if msg.reply != nil {
 		ev.Via = "reply to " + msg.reply.Parent.URI
@@ -861,7 +862,7 @@ func (m model) likeKey() (model, tea.Cmd) {
 		return m, nil
 	}
 	m.busy, m.err, m.status = true, nil, ""
-	c := m.a.c
+	c := m.a.Client
 	return m, func() tea.Msg {
 		ctx := context.Background()
 		if it.Like != "" {
@@ -876,7 +877,7 @@ func (m model) likeKey() (model, tea.Cmd) {
 func (m model) applyLiked(msg likedMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	it := msg.item
-	ev := store.AuditEvent{Action: "like", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following", OK: msg.err == nil,
+	ev := store.AuditEvent{Action: "like", DID: m.a.Client.DID, Handle: m.a.Client.Handle, Source: "tui:following", OK: msg.err == nil,
 		Record: msg.like, Detail: it.URI, Via: "@" + it.Author.Handle}
 	if msg.unlik {
 		ev.Action, ev.Record = "unlike", it.Like
@@ -943,7 +944,7 @@ func (m model) ownItem() (bsky.FeedItem, bool) {
 		return bsky.FeedItem{}, false
 	}
 	it := m.items[m.cur]
-	return it, it.Author.DID == m.a.c.DID && it.URI != ""
+	return it, it.Author.DID == m.a.Client.DID && it.URI != ""
 }
 
 // deleteKey deletes your own selected post, after a second press of d.
@@ -961,7 +962,7 @@ func (m model) deleteKey(confirm string) (model, tea.Cmd) {
 		return m, nil
 	}
 	m.busy, m.err = true, nil
-	c := m.a.c
+	c := m.a.Client
 	return m, func() tea.Msg {
 		return deletedMsg{item: it, err: c.DeletePost(context.Background(), it.URI)}
 	}
@@ -971,7 +972,7 @@ func (m model) deleteKey(confirm string) (model, tea.Cmd) {
 func (m model) applyDeleted(msg deletedMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	it := msg.item
-	ev := store.AuditEvent{Action: "delete-post", DID: m.a.c.DID, Handle: m.a.c.Handle, Source: "tui:following", OK: msg.err == nil, Record: it.URI,
+	ev := store.AuditEvent{Action: "delete-post", DID: m.a.Client.DID, Handle: m.a.Client.Handle, Source: "tui:following", OK: msg.err == nil, Record: it.URI,
 		Detail: truncateWidth(strings.Join(strings.Fields(it.Post.Text), " "), 200)}
 	if msg.err != nil {
 		ev.Error = msg.err.Error()
@@ -1124,7 +1125,7 @@ func (m model) browseKey(key, confirm string) (model, tea.Cmd) {
 		if key == "f" {
 			return m.decideKey(p, store.Followed)
 		}
-		if p.DID == m.a.c.DID {
+		if p.DID == m.a.Client.DID {
 			m.status = "that's you"
 			break
 		}
@@ -1150,7 +1151,7 @@ func (m model) maybeLoadMore() (model, tea.Cmd) {
 
 // decideKey applies decision to p, unless that is already recorded.
 func (m model) decideKey(p bsky.Profile, decision string) (model, tea.Cmd) {
-	if e, ok := m.a.st.Entries[p.DID]; ok && e.Decision == decision {
+	if e, ok := m.a.State.Entries[p.DID]; ok && e.Decision == decision {
 		m.status = fmt.Sprintf("@%s is already %s", p.Handle, decision)
 		return m, nil
 	}
@@ -1165,7 +1166,7 @@ func (m model) decideKey(p bsky.Profile, decision string) (model, tea.Cmd) {
 // block or follow when it is overridden) calls the API first; the state file is
 // only touched in applyAct.
 func (m model) decide(p bsky.Profile, decision string) (model, tea.Cmd) {
-	prev, had := m.a.st.Entries[p.DID]
+	prev, had := m.a.State.Entries[p.DID]
 	var prevP *store.Entry
 	if had {
 		prevP = &prev
@@ -1175,17 +1176,17 @@ func (m model) decide(p bsky.Profile, decision string) (model, tea.Cmd) {
 		idx = m.cur
 	}
 	e := undoEntry{tab: m.active(), idx: idx, profile: p, decision: decision, prev: prevP}
-	lift := had && isRemote(prev.Decision) && prev.Decision != decision
+	lift := had && app.IsRemote(prev.Decision) && prev.Decision != decision
 	known := ""
 	if lift {
 		known = m.records[p.DID]
 		if known == "" {
 			if fp := m.profiles[p.DID]; fp != nil {
-				known = viewerURI(fp, prev.Decision)
+				known = app.ViewerURI(fp, prev.Decision)
 			}
 		}
 	}
-	c := m.a.c
+	c := m.a.Client
 	m.busy, m.err = true, nil
 	return m, func() tea.Msg {
 		ctx := context.Background()
@@ -1193,18 +1194,18 @@ func (m model) decide(p bsky.Profile, decision string) (model, tea.Cmd) {
 		if lift { // e.g. keep/skip on a blocked account lifts the block
 			if known == "" {
 				if fp, err := c.GetProfile(ctx, p.DID); err == nil {
-					known = viewerURI(fp, prev.Decision)
+					known = app.ViewerURI(fp, prev.Decision)
 				}
 			}
 			if known != "" {
-				if msg.err = deleteFor(ctx, c, prev.Decision, known); msg.err != nil {
+				if msg.err = app.DeleteFor(ctx, c, prev.Decision, known); msg.err != nil {
 					return msg
 				}
 			}
 			msg.lifted = true
 		}
-		if isRemote(decision) {
-			msg.newURI, msg.err = createFor(ctx, c, decision, p.DID)
+		if app.IsRemote(decision) {
+			msg.newURI, msg.err = app.CreateFor(ctx, c, decision, p.DID)
 		}
 		return msg
 	}
@@ -1225,16 +1226,16 @@ func (m model) undo() (model, tea.Cmd) {
 	}
 	e := m.history[at]
 	m.history = append(m.history[:at:at], m.history[at+1:]...)
-	c := m.a.c
+	c := m.a.Client
 	m.busy, m.err = true, nil
 	return m, func() tea.Msg {
 		ctx := context.Background()
 		msg := actMsg{undo: e, isUndo: true}
-		if isRemote(e.decision) && e.record != "" {
-			msg.err = deleteFor(ctx, c, e.decision, e.record)
+		if app.IsRemote(e.decision) && e.record != "" {
+			msg.err = app.DeleteFor(ctx, c, e.decision, e.record)
 		}
-		if msg.err == nil && e.prev != nil && isRemote(e.prev.Decision) && e.prev.Decision != e.decision {
-			msg.newURI, msg.err = createFor(ctx, c, e.prev.Decision, e.profile.DID) // restore what we lifted
+		if msg.err == nil && e.prev != nil && app.IsRemote(e.prev.Decision) && e.prev.Decision != e.decision {
+			msg.newURI, msg.err = app.CreateFor(ctx, c, e.prev.Decision, e.profile.DID) // restore what we lifted
 		}
 		return msg
 	}
@@ -1324,7 +1325,7 @@ func styleLines(lines []string, st lipgloss.Style) []string {
 
 // decisionBadge shows what was decided about did earlier, if anything.
 func (m model) decisionBadge(did string) string {
-	switch m.a.st.Entries[did].Decision {
+	switch m.a.State.Entries[did].Decision {
 	case store.Blocked:
 		return errStyle.Render("● blocked")
 	case store.Followed:
@@ -1452,7 +1453,7 @@ func (m model) recentLines(did string, cw int, cur bsky.Post) []string {
 }
 
 // rc0 is the reposted post for did, or the zero Post.
-func rc0(ctxs map[string]repostCtx, did string) bsky.Post { return ctxs[did].Post }
+func rc0(ctxs map[string]app.RepostCtx, did string) bsky.Post { return ctxs[did].Post }
 
 func (m model) candRight(cw int) []string {
 	p, _ := m.subject()
@@ -1885,7 +1886,7 @@ func (m model) itemLines(i, w int) []string {
 	if isFresh {
 		add("new", fresh)
 	}
-	switch m.a.st.Entries[it.Author.DID].Decision {
+	switch m.a.State.Entries[it.Author.DID].Decision {
 	case store.Blocked:
 		add("blocked", errStyle)
 	case store.Followed:

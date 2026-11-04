@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdfranz/bskyban/internal/app"
 	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/store"
 )
@@ -48,9 +49,9 @@ func (s *script) fn(_ context.Context, cursor string) ([]bsky.FeedItem, string, 
 
 func refreshModel(t *testing.T, s *script, shown ...bsky.FeedItem) model {
 	a, _ := newTestApp(t)
-	m := newFeedModel(a, nil, s.fn)
+	m := newFeedModel(a.App, nil, s.fn)
 	m.loading, m.followLoading = false, false
-	m.ctxs = map[string]repostCtx{}
+	m.ctxs = map[string]app.RepostCtx{}
 	m.refresh = 30 * time.Second
 	m.width, m.height = 120, 40
 	m.items = shown
@@ -217,7 +218,7 @@ func TestFailedChecks(t *testing.T) {
 	}
 	m = check(t, m, false) // same failure again on the next tick
 	logged := func() []store.AuditEvent {
-		evs, err := store.ReadAudit(m.a.audit.Path())
+		evs, err := store.ReadAudit(m.a.Audit.Path())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -257,8 +258,8 @@ func TestNewRepostAuthorsJoinTheQueue(t *testing.T) {
 	}}}
 	m := refreshModel(t, s, A)
 	m.list = []bsky.Profile{existing}
-	m.ctxs["did:old"] = repostCtx{By: []string{"alice.bsky.social"}}
-	m.a.st.Entries["did:decided"] = store.Entry{Decision: store.Kept}
+	m.ctxs["did:old"] = app.RepostCtx{By: []string{"alice.bsky.social"}}
+	m.a.State.Entries["did:decided"] = store.Entry{Decision: store.Kept}
 	m = check(t, m, false)
 
 	var got []string

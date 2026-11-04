@@ -7,13 +7,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mdfranz/bskyban/internal/app"
 	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/store"
 )
 
-func actions(t *testing.T, a *app) []string {
+func actions(t *testing.T, a *app.App) []string {
 	t.Helper()
-	evs, err := store.ReadAudit(a.audit.Path())
+	evs, err := store.ReadAudit(a.Audit.Path())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +32,7 @@ func actions(t *testing.T, a *app) []string {
 func TestTUIActionsAreAudited(t *testing.T) {
 	m, _ := candidates(t)
 	m.list[0].Description = "  hello   there  "
-	m.ctxs = map[string]repostCtx{"did:a": {By: []string{"alice.bsky.social", "bob.bsky.social"}}}
+	m.ctxs = map[string]app.RepostCtx{"did:a": {By: []string{"alice.bsky.social", "bob.bsky.social"}}}
 	m = press(m, "b") // block a
 	m = press(m, "left")
 	m = press(m, "k") // override: lifts the block
@@ -41,7 +42,7 @@ func TestTUIActionsAreAudited(t *testing.T) {
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("actions = %v, want %v", got, want)
 	}
-	evs, _ := store.ReadAudit(m.a.audit.Path())
+	evs, _ := store.ReadAudit(m.a.Audit.Path())
 	b := evs[0]
 	if b.Source != "tui:review" || b.DID != "did:a" || b.Handle != "a.bsky.social" || !b.OK {
 		t.Errorf("block event = %+v", b)
@@ -67,7 +68,7 @@ func TestFeedActionsRecordSourceAndVia(t *testing.T) {
 	m, _ := followingModel(t)
 	m = press(m, "down")
 	m = press(m, "b")
-	evs, _ := store.ReadAudit(m.a.audit.Path())
+	evs, _ := store.ReadAudit(m.a.Audit.Path())
 	if len(evs) != 1 {
 		t.Fatalf("events = %+v", evs)
 	}
@@ -78,23 +79,23 @@ func TestFeedActionsRecordSourceAndVia(t *testing.T) {
 	m2, _ := followingModel(t)
 	m2 = press(m2, "b")
 	m2 = press(m2, "down")
-	if evs, _ := store.ReadAudit(m2.a.audit.Path()); len(evs) != 0 {
+	if evs, _ := store.ReadAudit(m2.a.Audit.Path()); len(evs) != 0 {
 		t.Errorf("navigation/confirmation was logged: %+v", evs)
 	}
 }
 
 func TestFailedActionIsAuditedNotRecorded(t *testing.T) {
 	m, _ := candidates(t)
-	m.a.c = bsky.NewClient("http://127.0.0.1:1") // nothing listens here
-	m.a.c.DID = "did:me"
+	m.a.Client = bsky.NewClient("http://127.0.0.1:1") // nothing listens here
+	m.a.Client.DID = "did:me"
 	m = press(m, "b")
 	if m.err == nil {
 		t.Fatal("expected an error to be shown")
 	}
-	if _, ok := m.a.st.Entries["did:a"]; ok {
+	if _, ok := m.a.State.Entries["did:a"]; ok {
 		t.Error("failed block must not be recorded as a decision")
 	}
-	evs, _ := store.ReadAudit(m.a.audit.Path())
+	evs, _ := store.ReadAudit(m.a.Audit.Path())
 	if len(evs) != 1 || evs[0].OK || evs[0].Error == "" || evs[0].Action != "block" {
 		t.Errorf("events = %+v", evs)
 	}
@@ -108,13 +109,13 @@ func TestCLIDryRunIsAuditedAndChangesNothing(t *testing.T) {
 	if err := a.act(t.Context(), "unblock", "x", true); err != nil {
 		t.Fatal(err)
 	}
-	if f.joined() != "" || len(a.st.Entries) != 0 {
-		t.Errorf("dry run changed something: %s %v", f.joined(), a.st.Entries)
+	if f.joined() != "" || len(a.State.Entries) != 0 {
+		t.Errorf("dry run changed something: %s %v", f.joined(), a.State.Entries)
 	}
 	if err := a.act(t.Context(), "unblock", "x", false); err != nil {
 		t.Fatal(err)
 	}
-	evs, _ := store.ReadAudit(a.audit.Path())
+	evs, _ := store.ReadAudit(a.Audit.Path())
 	if len(evs) != 2 || !evs[0].DryRun || evs[1].DryRun || evs[1].Source != "cli" || evs[1].Action != "unblock" {
 		t.Fatalf("events = %+v", evs)
 	}

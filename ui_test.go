@@ -13,6 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mdfranz/bskyban/internal/app"
 	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/store"
 	"github.com/mdfranz/bskyban/internal/termtext"
@@ -33,7 +34,7 @@ func (f *fakePDS) joined() string {
 	return strings.Join(f.calls, ",")
 }
 
-func newTestApp(t *testing.T) (*app, *fakePDS) {
+func newTestApp(t *testing.T) (*cliApp, *fakePDS) {
 	t.Helper()
 	f := &fakePDS{}
 	n := 0
@@ -95,7 +96,7 @@ func newTestApp(t *testing.T) (*app, *fakePDS) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &app{c: c, st: st, audit: store.NewAudit(t.TempDir() + "/audit.jsonl")}, f
+	return &cliApp{App: &app.App{Client: c, State: st, Audit: store.NewAudit(t.TempDir() + "/audit.jsonl")}}, f
 }
 
 func key(s string) tea.KeyMsg {
@@ -139,7 +140,7 @@ func press(m model, k string) model {
 
 func candidates(t *testing.T) (model, *fakePDS) {
 	a, f := newTestApp(t)
-	m := newModel(a, "review", nil)
+	m := newModel(a.App, "review", nil)
 	m.loading = false
 	m.width, m.height = 120, 40
 	for _, h := range []string{"a", "b", "c"} {
@@ -209,8 +210,8 @@ func TestArrowNavigationDoesNotDecide(t *testing.T) {
 	if m.idx != 0 {
 		t.Fatalf("home -> idx = %d", m.idx)
 	}
-	if len(m.a.st.Entries) != 0 || f.joined() != "" {
-		t.Errorf("navigation recorded something: %v / %s", m.a.st.Entries, f.joined())
+	if len(m.a.State.Entries) != 0 || f.joined() != "" {
+		t.Errorf("navigation recorded something: %v / %s", m.a.State.Entries, f.joined())
 	}
 }
 
@@ -253,8 +254,8 @@ func TestScrollClampsAndResets(t *testing.T) {
 func TestRevisitShowsDecisionAndLettersOverride(t *testing.T) {
 	m, f := candidates(t)
 	m = press(m, "b") // block a, advance to b
-	if m.idx != 1 || m.a.st.Entries["did:a"].Decision != store.Blocked {
-		t.Fatalf("after b: idx=%d entries=%v", m.idx, m.a.st.Entries)
+	if m.idx != 1 || m.a.State.Entries["did:a"].Decision != store.Blocked {
+		t.Fatalf("after b: idx=%d entries=%v", m.idx, m.a.State.Entries)
 	}
 	m = press(m, "left") // revisit a
 	if v := m.View(); !strings.Contains(v, "blocked") {
@@ -265,14 +266,14 @@ func TestRevisitShowsDecisionAndLettersOverride(t *testing.T) {
 		t.Errorf("repeat block should be a no-op, status=%q calls=%s", m.status, f.joined())
 	}
 	m = press(m, "k") // override: keep lifts the block
-	if got := m.a.st.Entries["did:a"].Decision; got != store.Kept {
+	if got := m.a.State.Entries["did:a"].Decision; got != store.Kept {
 		t.Errorf("decision = %q, want kept", got)
 	}
 	if f.joined() != "block,unblock" {
 		t.Errorf("calls = %s, want block,unblock", f.joined())
 	}
 	m = press(m, "u") // undo the keep: the earlier block is restored
-	if got := m.a.st.Entries["did:a"].Decision; got != store.Blocked {
+	if got := m.a.State.Entries["did:a"].Decision; got != store.Blocked {
 		t.Errorf("after undo decision = %q, want blocked", got)
 	}
 	if f.joined() != "block,unblock,block" {
@@ -284,7 +285,7 @@ func TestUndoBlockRemovesBlock(t *testing.T) {
 	m, f := candidates(t)
 	m = press(m, "b")
 	m = press(m, "u")
-	if _, ok := m.a.st.Entries["did:a"]; ok {
+	if _, ok := m.a.State.Entries["did:a"]; ok {
 		t.Error("undo should clear the decision")
 	}
 	if m.idx != 0 || f.joined() != "block,unblock" {
@@ -304,7 +305,7 @@ func TestUndoRestoredBlockDeletesCurrentRecord(t *testing.T) {
 	if got := strings.Join(f.deleted, ","); got != "rk1,rk2" {
 		t.Fatalf("deleted records = %s, want rk1,rk2", got)
 	}
-	if _, ok := m.a.st.Entries["did:a"]; ok {
+	if _, ok := m.a.State.Entries["did:a"]; ok {
 		t.Fatal("second undo should remove the decision")
 	}
 }
@@ -328,7 +329,7 @@ func TestQuitWaitsForActionPersistenceAndAudit(t *testing.T) {
 			if _, ok := exit().(tea.QuitMsg); !ok {
 				t.Fatal("expected quit message")
 			}
-			st, err := store.LoadState(m.a.st.Path())
+			st, err := store.LoadState(m.a.State.Path())
 			if err != nil || st.Entries["did:a"].Decision != store.Blocked {
 				t.Fatalf("decision not persisted: state=%+v err=%v", st, err)
 			}
@@ -353,7 +354,7 @@ func TestDeferredQuitShowsActionFailure(t *testing.T) {
 	if cmd != nil || m.quitting || m.busy || m.err == nil {
 		t.Fatal("failed action should stay open and show the error")
 	}
-	if len(m.a.st.Entries) != 0 || strings.Join(actions(t, m.a), ",") != "block!" {
+	if len(m.a.State.Entries) != 0 || strings.Join(actions(t, m.a), ",") != "block!" {
 		t.Fatal("failed action should only produce a failure audit")
 	}
 }
@@ -365,10 +366,10 @@ func TestFailedSaveRetriesWithoutRepeatingRemoteAction(t *testing.T) {
 			if undo {
 				m = press(m, "b")
 			}
-			good := m.a.st
+			good := m.a.State
 			bad := store.NewState(t.TempDir()) // renaming over a directory must fail
 			bad.Entries = good.Entries
-			m.a.st = bad
+			m.a.State = bad
 			beforeIdx, beforeHistory := m.idx, len(m.history)
 			if undo {
 				m = press(m, "u")
@@ -383,10 +384,10 @@ func TestFailedSaveRetriesWithoutRepeatingRemoteAction(t *testing.T) {
 				wantDecision = store.Blocked
 				beforeHistory--
 			}
-			if m.a.st.Entries["did:a"].Decision != wantDecision || len(m.history) != beforeHistory {
+			if m.a.State.Entries["did:a"].Decision != wantDecision || len(m.history) != beforeHistory {
 				t.Fatal("failed save committed local state or history")
 			}
-			events, err := store.ReadAudit(m.a.audit.Path())
+			events, err := store.ReadAudit(m.a.Audit.Path())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -401,7 +402,7 @@ func TestFailedSaveRetriesWithoutRepeatingRemoteAction(t *testing.T) {
 			if exit != nil {
 				t.Fatal("quit must not discard unsaved decision")
 			}
-			m.a.st = good
+			m.a.State = good
 			m = press(m, "r")
 			if m.pending != nil || m.err != nil || f.joined() != calls {
 				t.Fatalf("retry repeated action or failed: calls=%s err=%v", f.joined(), m.err)
@@ -423,7 +424,7 @@ func TestFailedSaveRetriesWithoutRepeatingRemoteAction(t *testing.T) {
 
 func followingModel(t *testing.T) (model, *fakePDS) {
 	a, f := newTestApp(t)
-	m := newFeedModel(a, nil, nil)
+	m := newFeedModel(a.App, nil, nil)
 	m.loading, m.followLoading = false, false
 	m.width, m.height = 120, 40
 	m.items = []bsky.FeedItem{
@@ -485,8 +486,8 @@ func TestBlockingSomeoneYouFollowNeedsConfirmation(t *testing.T) {
 		t.Fatal("confirmation should not survive another key")
 	}
 	m = press(m, "b")
-	if f.joined() != "block" || m.a.st.Entries["did:friend"].Decision != store.Blocked {
-		t.Errorf("second b should block: calls=%s entries=%v", f.joined(), m.a.st.Entries)
+	if f.joined() != "block" || m.a.State.Entries["did:friend"].Decision != store.Blocked {
+		t.Errorf("second b should block: calls=%s entries=%v", f.joined(), m.a.State.Entries)
 	}
 	if m.cur != 0 {
 		t.Errorf("timeline cursor should stay put, cur=%d", m.cur)

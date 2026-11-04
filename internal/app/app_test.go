@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"fmt"
@@ -44,10 +44,10 @@ func TestFeedCandidates(t *testing.T) {
 		t.Fatal(err)
 	}
 	st.Entries["did:decided"] = store.Entry{Decision: store.Kept}
-	a := &app{c: bsky.NewClient(srv.URL), st: st}
-	a.c.DID = "did:me"
+	a := &App{Client: bsky.NewClient(srv.URL), State: st}
+	a.Client.DID = "did:me"
 
-	list, rc, err := a.feedCandidates(t.Context(), 1, false)
+	list, rc, err := a.FeedCandidates(t.Context(), 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}

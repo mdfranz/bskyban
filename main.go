@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mdfranz/bskyban/internal/app"
 	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/store"
 	"github.com/mdfranz/bskyban/internal/termtext"
@@ -93,7 +94,7 @@ func realMain() int {
 	if err := c.Login(ctx, handle, pw); err != nil {
 		return fail(fmt.Errorf("login: %w", err))
 	}
-	a := &app{c: c, st: st, audit: store.NewAudit(auditPath), stdin: os.Stdin, stdout: os.Stdout}
+	a := &cliApp{App: &app.App{Client: c, State: st, Audit: store.NewAudit(auditPath)}, stdin: os.Stdin, stdout: os.Stdout}
 
 	switch cmd {
 	case "feed":
@@ -101,12 +102,12 @@ func realMain() int {
 			err = a.cmdFeedList(ctx, opts.pages, opts.backlog, opts.asJSON)
 		} else {
 			applyTheme(opts.theme)
-			fm := newFeedModel(a,
-				func(ctx context.Context) ([]bsky.Profile, map[string]repostCtx, error) {
-					return a.feedCandidates(ctx, opts.pages, opts.backlog)
+			fm := newFeedModel(a.App,
+				func(ctx context.Context) ([]bsky.Profile, map[string]app.RepostCtx, error) {
+					return a.FeedCandidates(ctx, opts.pages, opts.backlog)
 				},
 				func(ctx context.Context, cursor string) ([]bsky.FeedItem, string, error) {
-					return a.c.GetTimeline(ctx, cursor, 50)
+					return a.Client.GetTimeline(ctx, cursor, 50)
 				})
 			fm.refresh, fm.backlog = opts.refresh, opts.backlog
 			fm.fancy = opts.fancy || envOn("BSKYBAN_FANCY")
@@ -117,8 +118,8 @@ func realMain() int {
 			err = a.cmdPostsList(ctx, opts.n, opts.asJSON)
 		} else {
 			applyTheme(opts.theme)
-			pm := newPostsModel(a, func(ctx context.Context, cursor string) ([]bsky.FeedItem, string, error) {
-				return a.c.GetOwnPosts(ctx, cursor, 50)
+			pm := newPostsModel(a.App, func(ctx context.Context, cursor string) ([]bsky.FeedItem, string, error) {
+				return a.Client.GetOwnPosts(ctx, cursor, 50)
 			})
 			pm.refresh = opts.refresh
 			pm.fancy = opts.fancy || envOn("BSKYBAN_FANCY")
@@ -126,8 +127,8 @@ func realMain() int {
 		}
 	case "review":
 		applyTheme(opts.theme)
-		err = runTUI(newModel(a, "review", func(ctx context.Context) ([]bsky.Profile, map[string]repostCtx, error) {
-			l, err := a.followers(ctx, opts.since, false, opts.backlog)
+		err = runTUI(newModel(a.App, "review", func(ctx context.Context) ([]bsky.Profile, map[string]app.RepostCtx, error) {
+			l, err := a.Followers(ctx, opts.since, false, opts.backlog)
 			return l, nil, err
 		}))
 	default:

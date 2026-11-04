@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mdfranz/bskyban/internal/app"
 	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
 )
@@ -111,7 +112,7 @@ func openCompose(m model) model {
 
 func TestPostsModelIsAFeedOfYourOwnPosts(t *testing.T) {
 	a, _ := newTestApp(t)
-	m := newPostsModel(a, func(context.Context, string) ([]bsky.FeedItem, string, error) { return nil, "", nil })
+	m := newPostsModel(a.App, func(context.Context, string) ([]bsky.FeedItem, string, error) { return nil, "", nil })
 	m.followLoading = false
 	m.width, m.height = 100, 30
 	m.items = []bsky.FeedItem{{Author: bsky.Profile{DID: "did:me", Handle: "me.bsky.social"}, URI: "at://did:me/app.bsky.feed.post/3k", Post: bsky.Post{Text: "mine"}}}
@@ -180,7 +181,7 @@ func TestLikeAndReplyOnTheRepostedPostInTheRepostsTab(t *testing.T) {
 	author := bsky.Profile{DID: "did:rando", Handle: "rando.bsky.social"}
 	item := bsky.FeedItem{Author: author, URI: "at://did:rando/app.bsky.feed.post/9", CID: "cid9", Post: bsky.Post{Text: "buy now"}}
 	m.list = []bsky.Profile{author}
-	m.ctxs = map[string]repostCtx{"did:rando": {Post: item.Post, Item: item, By: []string{"friend.bsky.social"}}}
+	m.ctxs = map[string]app.RepostCtx{"did:rando": {Post: item.Post, Item: item, By: []string{"friend.bsky.social"}}}
 	m = step(m, key("h"))
 	if f.joined() != "like" || m.ctxs["did:rando"].Item.Like == "" {
 		t.Fatalf("calls=%q err=%v", f.joined(), m.err)
@@ -262,7 +263,7 @@ func TestLNoLongerMovesRightInTheFeedButDoesInReview(t *testing.T) {
 
 	m.tab = 1 // Reposts
 	m.list = []bsky.Profile{{DID: "did:a", Handle: "a.bsky.social"}, {DID: "did:b", Handle: "b.bsky.social"}}
-	m.ctxs = map[string]repostCtx{}
+	m.ctxs = map[string]app.RepostCtx{}
 	m = press(m, "l")
 	if m.idx != 0 {
 		t.Errorf("l should not move to the next account in the feed: idx=%d", m.idx)

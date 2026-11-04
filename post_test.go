@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/mdfranz/bskyban/internal/app"
 	"github.com/mdfranz/bskyban/internal/bsky"
 )
 
@@ -14,7 +15,7 @@ func TestPostURL(t *testing.T) {
 }
 
 func TestPostURI(t *testing.T) {
-	a := &app{c: &bsky.Client{DID: "did:plc:me"}}
+	a := &cliApp{App: &app.App{Client: &bsky.Client{DID: "did:plc:me"}}}
 	for ref, want := range map[string]string{
 		"3k":                                    "at://did:plc:me/app.bsky.feed.post/3k",
 		"at://did:plc:me/app.bsky.feed.post/3k": "at://did:plc:me/app.bsky.feed.post/3k",
