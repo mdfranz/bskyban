@@ -244,41 +244,6 @@ func (c *Client) GetOwnPosts(ctx context.Context, cursor string, limit int) ([]F
 	return items, next, nil
 }
 
-// Repost is a post someone you follow reposted, with its original author.
-type Repost struct {
-	Item   FeedItem // the reposted post itself, for liking or replying to it
-	Post   Post
-	Author Profile // original author
-	By     Profile // who reposted it
-}
-
-// GetTimelineReposts scans up to pages pages (100 items each) of your home
-// timeline, newest first, and returns the reposts in it.
-func (c *Client) GetTimelineReposts(ctx context.Context, pages int) ([]Repost, error) {
-	var reposts []Repost
-	cursor := ""
-	for i := 0; i < max(pages, 1); i++ {
-		q := url.Values{"limit": {"100"}}
-		if cursor != "" {
-			q.Set("cursor", cursor)
-		}
-		entries, next, err := c.feedPage(ctx, "app.bsky.feed.getTimeline", q)
-		if err != nil {
-			return nil, err
-		}
-		for _, e := range entries {
-			if e.isRepost() {
-				reposts = append(reposts, Repost{Item: e.item(), Post: e.toPost(), Author: e.Post.Author, By: e.Reason.By})
-			}
-		}
-		if next == "" || len(entries) == 0 {
-			break
-		}
-		cursor = next
-	}
-	return reposts, nil
-}
-
 // RKey is the record key at the end of an at:// URI.
 func RKey(uri string) string { return uri[strings.LastIndex(uri, "/")+1:] }
 

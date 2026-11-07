@@ -106,7 +106,7 @@ sequenceDiagram
 
 Because the audit write is deferred, every attempt is logged, including dry runs and failures. The remote change happens *before* the local state change, so a failed remote call leaves state untouched, and a failed local save after a successful remote call is surfaced (see Resilience).
 
-`App.FeedCandidates` builds the Reposts queue: it takes the reposts found in the timeline (`GetTimelineReposts`, `--pages` pages of 100 items), keeps the **original author** of each, drops anyone you follow, have blocked or already decided on (`IsNew`), and collapses duplicates while remembering every `By` handle that reposted them (`app.RepostCtx`).
+`App.FeedCandidates` builds the Reposts queue: it reads `--pages` pages of 100 timeline items (`GetTimeline`) and takes the reposts among them (`MergeRepostCandidates`, which the TUI also uses when a refresh brings in new items), keeps the **original author** of each, drops anyone you follow, have blocked or already decided on (`IsNew`), and collapses duplicates while remembering every `By` handle that reposted them (`app.RepostCtx`).
 
 ### 5. The TUI (`internal/tui`)
 

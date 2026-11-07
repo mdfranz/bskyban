@@ -372,21 +372,7 @@ func (m model) mergeCandidates(items []bsky.FeedItem) model {
 	if m.loading || m.ctxs == nil {
 		return m
 	}
-	for _, it := range items {
-		if it.By == "" || !m.a.IsNew(it.Author, m.backlog) {
-			continue
-		}
-		rc, seen := m.ctxs[it.Author.DID]
-		if !seen {
-			m.list = append(m.list, it.Author)
-			rc.Post, rc.Item = it.Post, it
-			rc.Item.By = ""
-		}
-		if !slices.Contains(rc.By, it.By) {
-			rc.By = append(rc.By, it.By)
-		}
-		m.ctxs[it.Author.DID] = rc
-	}
+	m.list = m.a.MergeRepostCandidates(m.list, m.ctxs, items, m.backlog)
 	return m
 }
 

@@ -58,28 +58,43 @@ type RepostCtx struct {
 // FeedCandidates returns the original authors of reposts in your timeline that
 // are new to you, in order of first appearance (newest first), each once.
 func (a *App) FeedCandidates(ctx context.Context, pages int, backlog bool) ([]bsky.Profile, map[string]RepostCtx, error) {
-	reposts, err := a.Client.GetTimelineReposts(ctx, pages)
-	if err != nil {
-		return nil, nil, err
-	}
-	var out []bsky.Profile
+	var list []bsky.Profile
 	rc := map[string]RepostCtx{}
-	for _, r := range reposts {
-		if !a.IsNew(r.Author, backlog) {
+	cursor := ""
+	for range max(pages, 1) {
+		items, next, err := a.Client.GetTimeline(ctx, cursor, 100)
+		if err != nil {
+			return nil, nil, err
+		}
+		list = a.MergeRepostCandidates(list, rc, items, backlog)
+		if next == "" || len(items) == 0 {
+			break
+		}
+		cursor = next
+	}
+	return list, rc, nil
+}
+
+// MergeRepostCandidates adds the authors of the reposts among items that are new
+// to you to list (each once, at the end, so an account being reviewed does not
+// move) and records in rc who reposted them. It returns the extended list.
+func (a *App) MergeRepostCandidates(list []bsky.Profile, rc map[string]RepostCtx, items []bsky.FeedItem, backlog bool) []bsky.Profile {
+	for _, it := range items {
+		if it.By == "" || !a.IsNew(it.Author, backlog) {
 			continue
 		}
-		cur, seen := rc[r.Author.DID]
+		cur, seen := rc[it.Author.DID]
 		if !seen {
-			out = append(out, r.Author)
-			cur.Post, cur.Item = r.Post, r.Item
-			cur.Post.Repost = false // shown as the original post, under "Reposted by"
+			list = append(list, it.Author)
+			cur.Post, cur.Item = it.Post, it
+			cur.Item.By = ""
 		}
-		if !slices.Contains(cur.By, r.By.Handle) {
-			cur.By = append(cur.By, r.By.Handle)
+		if !slices.Contains(cur.By, it.By) {
+			cur.By = append(cur.By, it.By)
 		}
-		rc[r.Author.DID] = cur
+		rc[it.Author.DID] = cur
 	}
-	return out, rc, nil
+	return list
 }
 
 // IsRemote reports whether a decision leaves a record on your account (so that
