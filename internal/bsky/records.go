@@ -18,6 +18,7 @@ const (
 	followCollection = "app.bsky.graph.follow"
 	PostCollection   = "app.bsky.feed.post"
 	likeCollection   = "app.bsky.feed.like"
+	repostCollection = "app.bsky.feed.repost"
 )
 
 // createSubjectRecord creates an app.bsky.graph.<block|follow> record about did
@@ -68,13 +69,27 @@ func linkFacets(text string) []map[string]any {
 // Post publishes a text post to your account and returns its AT URI. A non-nil
 // reply makes it an answer in that thread.
 func (c *Client) Post(ctx context.Context, text string, reply *ReplyRef) (string, error) {
+	return c.PostWith(ctx, text, PostOptions{Reply: reply})
+}
+
+// PostOptions are the optional parts of a post.
+type PostOptions struct {
+	Reply *ReplyRef // makes the post an answer in that thread
+	Quote *PostRef  // embeds this post, which is how Bluesky quote-posts with a comment
+}
+
+// PostWith publishes a text post with the given options and returns its AT URI.
+func (c *Client) PostWith(ctx context.Context, text string, opts PostOptions) (string, error) {
 	rec := map[string]any{
 		"$type":     PostCollection,
 		"text":      text,
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
 	}
-	if reply != nil {
-		rec["reply"] = reply
+	if opts.Reply != nil {
+		rec["reply"] = opts.Reply
+	}
+	if opts.Quote != nil {
+		rec["embed"] = map[string]any{"$type": "app.bsky.embed.record", "record": opts.Quote}
 	}
 	if f := linkFacets(text); len(f) > 0 {
 		rec["facets"] = f
@@ -84,6 +99,24 @@ func (c *Client) Post(ctx context.Context, text string, reply *ReplyRef) (string
 	}
 	err := c.do(ctx, http.MethodPost, "com.atproto.repo.createRecord", nil, map[string]any{
 		"repo": c.DID, "collection": PostCollection, "record": rec,
+	}, &out)
+	return out.URI, err
+}
+
+// Repost shares a post to your followers, without a comment, and returns the AT
+// URI of the repost record.
+func (c *Client) Repost(ctx context.Context, post PostRef) (string, error) {
+	var out struct {
+		URI string `json:"uri"`
+	}
+	err := c.do(ctx, http.MethodPost, "com.atproto.repo.createRecord", nil, map[string]any{
+		"repo":       c.DID,
+		"collection": repostCollection,
+		"record": map[string]any{
+			"$type":     repostCollection,
+			"subject":   post,
+			"createdAt": time.Now().UTC().Format(time.RFC3339),
+		},
 	}, &out)
 	return out.URI, err
 }

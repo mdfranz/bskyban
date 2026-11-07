@@ -165,6 +165,7 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 | `k` / `U` | keep / undo | keep / undo |
 | `u` | unfollow the author (press twice) | unfollow the author (press twice) |
 | `r` | reply to the selected post | reply to this post |
+| `t` | share: type a comment to quote the post, or press Enter on an empty box to repost it as is | same |
 | `h` | like (again to remove your like) | like / unlike |
 | `o` | pick a link in the post to open | pick a link in the post to open |
 | `i` | open the post's images in your browser | open the post's images in your browser |

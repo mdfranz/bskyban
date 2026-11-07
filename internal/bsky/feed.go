@@ -187,6 +187,9 @@ type PostStats struct {
 	Quotes  int `json:"quoteCount"`
 }
 
+// Ref is the post's URI and CID, which is what a like, repost or quote points at.
+func (it FeedItem) Ref() PostRef { return PostRef{it.URI, it.CID} }
+
 // ReplyTo is the reply reference for answering this post.
 func (it FeedItem) ReplyTo() *ReplyRef {
 	parent := PostRef{it.URI, it.CID}

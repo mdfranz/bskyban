@@ -31,11 +31,19 @@ func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch key {
 	case "esc":
-		m.composing, m.replyTo, m.err = false, nil, nil
+		m.composing, m.replyTo, m.quoting, m.err = false, nil, nil, nil
 		m.input.Blur()
 		return m, nil
 	case "enter":
 		text := strings.TrimSpace(m.input.Value())
+		if text == "" && m.quoting != nil { // sharing without a comment is a plain repost
+			m.busy, m.err = true, nil
+			c, ref := m.a.Client, m.quoting.Ref()
+			return m, func() tea.Msg {
+				uri, err := c.Repost(context.Background(), ref)
+				return postedMsg{uri: uri, quote: &ref, repost: true, err: err}
+			}
+		}
 		if text == "" {
 			return m, nil
 		}
@@ -49,9 +57,14 @@ func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.replyTo != nil {
 			reply = m.replyTo.ReplyTo()
 		}
+		var quote *bsky.PostRef
+		if m.quoting != nil {
+			ref := m.quoting.Ref()
+			quote = &ref
+		}
 		return m, func() tea.Msg {
-			uri, err := c.Post(context.Background(), text, reply)
-			return postedMsg{text: text, uri: uri, reply: reply, err: err}
+			uri, err := c.PostWith(context.Background(), text, bsky.PostOptions{Reply: reply, Quote: quote})
+			return postedMsg{text: text, uri: uri, reply: reply, quote: quote, err: err}
 		}
 	}
 	var cmd tea.Cmd
@@ -65,7 +78,12 @@ func (m model) applyPosted(msg postedMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	ev := store.AuditEvent{Action: "post", DID: m.a.Client.DID, Handle: m.a.Client.Handle, Source: "tui:following", OK: msg.err == nil, Record: msg.uri,
 		Detail: termtext.TruncateWidth(termtext.OneLine(msg.text), 200)}
-	if msg.reply != nil {
+	switch {
+	case msg.repost:
+		ev.Action, ev.Detail = "repost", msg.quote.URI
+	case msg.quote != nil:
+		ev.Via = "quote of " + msg.quote.URI
+	case msg.reply != nil:
 		ev.Via = "reply to " + msg.reply.Parent.URI
 	}
 	if msg.err != nil {
@@ -76,7 +94,7 @@ func (m model) applyPosted(msg postedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.audit(ev)
-	m.composing, m.replyTo = false, nil
+	m.composing, m.replyTo, m.quoting = false, nil, nil
 	m.input.Blur()
 	m.input.SetValue("")
 	if m.quitting && m.err == nil {
@@ -85,6 +103,9 @@ func (m model) applyPosted(msg postedMsg) (tea.Model, tea.Cmd) {
 	m.quitting = false
 	m, cmd := m.startCheck(true) // shows the new post at the top
 	m.status = "posted " + bsky.PostURL(msg.uri)
+	if msg.repost {
+		m.status = "reposted"
+	}
 	return m, cmd
 }
 
@@ -254,6 +275,14 @@ func (m model) composeView() string {
 			quote = termtext.TruncateWidth(quote, w)
 		}
 		b.WriteString(dimStyle.Render("▎ "+quote) + "\n\n")
+	} else if q := m.quoting; q != nil {
+		b.WriteString(headingStyle.Render("Share @"+termtext.Sanitize(q.Author.Handle)+"'s post") + "\n")
+		quote := termtext.OneLine(termtext.Sanitize(q.Post.Text))
+		if w := m.width - 4; w > 10 {
+			quote = termtext.TruncateWidth(quote, w)
+		}
+		b.WriteString(dimStyle.Render("▎ "+quote) + "\n")
+		b.WriteString(dimStyle.Render("Add a comment to quote it, or leave it empty to repost as is.") + "\n\n")
 	} else {
 		b.WriteString(headingStyle.Render("New post") + "\n\n")
 	}

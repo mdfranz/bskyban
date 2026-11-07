@@ -61,10 +61,12 @@ type (
 		err   error
 	}
 	postedMsg struct {
-		text  string
-		uri   string
-		reply *bsky.ReplyRef
-		err   error
+		text   string
+		uri    string
+		reply  *bsky.ReplyRef
+		quote  *bsky.PostRef // the post quoted by a comment
+		repost bool          // a plain repost: no comment, so no new post of your own
+		err    error
 	}
 	likedMsg struct {
 		item  bsky.FeedItem
@@ -128,6 +130,7 @@ type model struct {
 	follows   *followsBrowser // accounts followed by the selected author
 	composing bool            // writing a new post (feed mode)
 	replyTo   *bsky.FeedItem  // ...as an answer to this post
+	quoting   *bsky.FeedItem  // ...or as a comment on (a repost of) this post
 	input     textinput.Model // the post being written
 
 	busy     bool
@@ -472,7 +475,7 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.openFollows()
 	}
 	if key == "n" && m.timeline != nil {
-		m.composing, m.replyTo, m.status, m.err = true, nil, "", nil
+		m.composing, m.replyTo, m.quoting, m.status, m.err = true, nil, nil, "", nil
 		m.input.SetValue("")
 		return m, m.input.Focus()
 	}
@@ -481,7 +484,16 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
-		m.composing, m.replyTo, m.status, m.err = true, &it, "", nil
+		m.composing, m.replyTo, m.quoting, m.status, m.err = true, &it, nil, "", nil
+		m.input.SetValue("")
+		return m, m.input.Focus()
+	}
+	if key == "t" && m.timeline != nil { // share: a comment makes it a quote post, none a plain repost
+		it, ok := m.selected()
+		if !ok || it.URI == "" {
+			return m, nil
+		}
+		m.composing, m.replyTo, m.quoting, m.status, m.err = true, nil, &it, "", nil
 		m.input.SetValue("")
 		return m, m.input.Focus()
 	}
@@ -696,6 +708,9 @@ func (m model) hintItems() []string {
 		if m.replyTo != nil {
 			return []string{"enter reply", "esc cancel"}
 		}
+		if m.quoting != nil {
+			return []string{"enter share (no comment: plain repost)", "esc cancel"}
+		}
 		return []string{"enter post", "esc cancel"}
 	}
 	var items []string
@@ -717,7 +732,7 @@ func (m model) hintItems() []string {
 		if _, own := m.ownItem(); own {
 			items = append(items, "d delete")
 		}
-		items = append(items, "r reply", "h like", "enter/o open link")
+		items = append(items, "r reply", "t share", "h like", "enter/o open link")
 		if _, ok := m.postImages(); ok {
 			items = append(items, "i open images")
 		}

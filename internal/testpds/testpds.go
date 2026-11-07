@@ -20,6 +20,14 @@ type PDS struct {
 	mu      sync.Mutex
 	calls   []string
 	deleted []string
+	last    map[string]any
+}
+
+// LastRecord is the record body of the most recent createRecord call.
+func (f *PDS) LastRecord() map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.last
 }
 
 func (f *PDS) log(s string) { f.mu.Lock(); f.calls = append(f.calls, s); f.mu.Unlock() }
@@ -31,7 +39,7 @@ func (f *PDS) DeletedKeys() []string {
 	return append([]string(nil), f.deleted...)
 }
 
-// Joined is the write calls so far, in order, comma separated (block, unblock, follow, like, post, ...).
+// Joined is the write calls so far, in order, comma separated (block, unblock, follow, like, repost, post, ...).
 func (f *PDS) Joined() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -47,8 +55,14 @@ func New(t *testing.T) (*app.App, *PDS) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/xrpc/com.atproto.repo.createRecord":
-			var body struct{ Collection string }
+			var body struct {
+				Collection string
+				Record     map[string]any
+			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			f.mu.Lock()
+			f.last = body.Record
+			f.mu.Unlock()
 			n++
 			kind := "block"
 			if strings.HasSuffix(body.Collection, ".follow") {
@@ -57,6 +71,8 @@ func New(t *testing.T) (*app.App, *PDS) {
 				kind = "post"
 			} else if strings.HasSuffix(body.Collection, ".like") {
 				kind = "like"
+			} else if strings.HasSuffix(body.Collection, ".repost") {
+				kind = "repost"
 			}
 			f.log(kind)
 			fmt.Fprintf(w, `{"uri":"at://did:me/%s/rk%d"}`, body.Collection, n)
