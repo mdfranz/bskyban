@@ -2,6 +2,7 @@ package bsky
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -102,5 +103,33 @@ func TestPreviewKeepsURLsWhole(t *testing.T) {
 func TestPostURL(t *testing.T) {
 	if got := PostURL("at://did:plc:x/app.bsky.feed.post/3k"); got != "https://bsky.app/profile/did:plc:x/post/3k" {
 		t.Errorf("got %q", got)
+	}
+}
+
+func TestURLHelpers(t *testing.T) {
+	const uri = "at://did:plc:x/app.bsky.feed.post/3k"
+	if got := RKey(uri); got != "3k" {
+		t.Errorf("RKey = %q", got)
+	}
+	if got := ProfileURL("a.example"); got != "https://bsky.app/profile/a.example" {
+		t.Errorf("ProfileURL = %q", got)
+	}
+	it := FeedItem{URI: uri}
+	if got := it.PostURL(); got != "https://bsky.app/profile/did:plc:x/post/3k" {
+		t.Errorf("without a handle: %q", got)
+	}
+	it.Author.Handle = "a.example"
+	if got := it.PostURL(); got != "https://bsky.app/profile/a.example/post/3k" {
+		t.Errorf("with a handle: %q", got)
+	}
+}
+
+func TestValidatePostText(t *testing.T) {
+	if err := ValidatePostText(strings.Repeat("é", MaxPostGraphemes)); err != nil {
+		t.Errorf("limit-length post rejected: %v", err)
+	}
+	err := ValidatePostText(strings.Repeat("x", MaxPostGraphemes+1))
+	if err == nil || !strings.Contains(err.Error(), "301 characters") {
+		t.Errorf("over-length post: %v", err)
 	}
 }

@@ -201,9 +201,9 @@ func (a *CLI) cmdShow(ctx context.Context, args []string) error {
 	if status == "" {
 		status = "new"
 	}
-	fmt.Fprintf(a.stdout, "%s (@%s)\nDID:       %s\nStatus:    %s\nCreated:   %s (%s)\nPosts:     %d\nFollowers: %d\nFollowing: %d\nAvatar:    %v\nURL:       https://bsky.app/profile/%s\n\n%s\n",
+	fmt.Fprintf(a.stdout, "%s (@%s)\nDID:       %s\nStatus:    %s\nCreated:   %s (%s)\nPosts:     %d\nFollowers: %d\nFollowing: %d\nAvatar:    %v\nURL:       %s\n\n%s\n",
 		p.DisplayName, p.Handle, p.DID, status, p.CreatedAt, termtext.HumanAge(p.Age()),
-		p.PostsCount, p.FollowersCount, p.FollowsCount, p.Avatar != "", p.Handle, termtext.LinkifyIfTTY(p.Description))
+		p.PostsCount, p.FollowersCount, p.FollowsCount, p.Avatar != "", bsky.ProfileURL(p.Handle), termtext.LinkifyIfTTY(p.Description))
 	posts, err := a.Client.GetRecentPosts(ctx, p.DID, 5)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "recent posts: %v\n", err)
@@ -260,7 +260,7 @@ func (a *CLI) PostsList(ctx context.Context, n int, asJSON bool) error {
 			if printed++; printed > n {
 				break
 			}
-			rkey := it.URI[strings.LastIndex(it.URI, "/")+1:]
+			rkey := bsky.RKey(it.URI)
 			if asJSON {
 				_ = enc.Encode(map[string]any{"uri": it.URI, "rkey": rkey, "createdAt": it.Post.CreatedAt, "text": it.Post.Text})
 				continue
@@ -301,8 +301,8 @@ func (a *CLI) cmdPost(ctx context.Context, args []string) (err error) {
 	if text == "" {
 		return fmt.Errorf("%w: post needs some text", ErrUsage)
 	}
-	if n := uniseg.GraphemeClusterCount(text); n > bsky.MaxPostGraphemes {
-		return fmt.Errorf("post is %d characters; the limit is %d", n, bsky.MaxPostGraphemes)
+	if err := bsky.ValidatePostText(text); err != nil {
+		return err
 	}
 	ev := store.AuditEvent{Action: "post", DID: a.Client.DID, Handle: a.Client.Handle, DryRun: *dry, Detail: termtext.TruncateWidth(termtext.OneLine(text), 200)}
 	defer func() {

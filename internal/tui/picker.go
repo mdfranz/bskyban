@@ -34,7 +34,7 @@ func postLinks(it bsky.FeedItem) []pickLink {
 	}
 	p := it.Post
 	if it.URI != "" {
-		add("post on bsky.app", postLink(it))
+		add("post on bsky.app", it.PostURL())
 	}
 	if c := p.Link; c != nil {
 		label := c.Title
@@ -54,10 +54,10 @@ func postLinks(it bsky.FeedItem) []pickLink {
 		add(who, bsky.PostURL(p.QuoteURI))
 	}
 	for _, mm := range mentionRe.FindAllStringSubmatch(p.Text, -1) {
-		add("@"+mm[1], "https://bsky.app/profile/"+mm[1])
+		add("@"+mm[1], bsky.ProfileURL(mm[1]))
 	}
 	if h := it.Author.Handle; h != "" {
-		add("@"+h+"'s profile", "https://bsky.app/profile/"+h)
+		add("@"+h+"'s profile", bsky.ProfileURL(h))
 	}
 	return out
 }

@@ -99,7 +99,7 @@ func (m model) followsKey(key string) (model, tea.Cmd) {
 	case "enter", "o":
 		if len(b.accounts) > 0 {
 			p := b.accounts[b.selected]
-			if err := openURL("https://bsky.app/profile/" + p.DID); err != nil {
+			if err := openURL(bsky.ProfileURL(p.DID)); err != nil {
 				m.err = fmt.Errorf("open profile: %w", err)
 			} else {
 				m.status = "opened @" + p.Handle + "'s profile"

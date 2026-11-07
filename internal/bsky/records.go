@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/rivo/uniseg"
 )
 
 const (
@@ -38,6 +40,14 @@ func (c *Client) createSubjectRecord(ctx context.Context, collection, did string
 
 // MaxPostGraphemes is Bluesky's post length limit.
 const MaxPostGraphemes = 300
+
+// ValidatePostText returns an error when text is longer than Bluesky allows.
+func ValidatePostText(text string) error {
+	if n := uniseg.GraphemeClusterCount(text); n > MaxPostGraphemes {
+		return fmt.Errorf("post is %d characters; the limit is %d", n, MaxPostGraphemes)
+	}
+	return nil
+}
 
 var urlRE = regexp.MustCompile(`https?://[^\s]+`)
 
@@ -128,14 +138,13 @@ func (c *Client) GetPost(ctx context.Context, uri string) (PostRef, string, erro
 
 // deleteRecord removes the record at uri (at://did/collection/rkey) from your repo.
 func (c *Client) deleteRecord(ctx context.Context, collection, uri string) error {
-	i := strings.LastIndex(uri, "/")
-	if i < 0 {
+	if !strings.Contains(uri, "/") {
 		return fmt.Errorf("bad record uri %q", uri)
 	}
 	return c.do(ctx, http.MethodPost, "com.atproto.repo.deleteRecord", nil, map[string]any{
 		"repo":       c.DID,
 		"collection": collection,
-		"rkey":       uri[i+1:],
+		"rkey":       RKey(uri),
 	}, nil)
 }
 

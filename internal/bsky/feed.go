@@ -279,12 +279,26 @@ func (c *Client) GetTimelineReposts(ctx context.Context, pages int) ([]Repost, e
 	return reposts, nil
 }
 
+// RKey is the record key at the end of an at:// URI.
+func RKey(uri string) string { return uri[strings.LastIndex(uri, "/")+1:] }
+
+// ProfileURL is an account's bsky.app page; actor is a handle or a DID.
+func ProfileURL(actor string) string { return "https://bsky.app/profile/" + actor }
+
 // PostURL turns at://did/app.bsky.feed.post/rkey into its bsky.app link.
 func PostURL(uri string) string {
-	if i := strings.LastIndex(uri, "/"); i >= 0 && strings.HasPrefix(uri, "at://") {
+	if strings.HasPrefix(uri, "at://") {
 		if parts := strings.Split(strings.TrimPrefix(uri, "at://"), "/"); len(parts) == 3 {
-			return "https://bsky.app/profile/" + parts[0] + "/post/" + uri[i+1:]
+			return ProfileURL(parts[0]) + "/post/" + parts[2]
 		}
 	}
 	return uri
+}
+
+// PostURL is the post's bsky.app address, using the author's handle when known.
+func (it FeedItem) PostURL() string {
+	if it.Author.Handle == "" {
+		return PostURL(it.URI)
+	}
+	return ProfileURL(it.Author.Handle) + "/post/" + RKey(it.URI)
 }

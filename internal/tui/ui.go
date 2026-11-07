@@ -898,8 +898,8 @@ func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if text == "" {
 			return m, nil
 		}
-		if n := uniseg.GraphemeClusterCount(text); n > bsky.MaxPostGraphemes {
-			m.err = fmt.Errorf("post is %d characters; the limit is %d", n, bsky.MaxPostGraphemes)
+		if err := bsky.ValidatePostText(text); err != nil {
+			m.err = err
 			return m, nil
 		}
 		m.busy, m.err = true, nil
@@ -1487,7 +1487,7 @@ func (m model) profilePanel(cw int, pos string) []string {
 	lines := styleLines(termtext.Wrap(name, cw-12), headingStyle)
 	lines[len(lines)-1] += "  " + dimStyle.Render(pos)
 	lines = append(lines, accentStyle.Render("@"+p.Handle),
-		dimStyle.Render(termtext.OSC8("https://bsky.app/profile/"+p.Handle, "open profile ↗")))
+		dimStyle.Render(termtext.OSC8(bsky.ProfileURL(p.Handle), "open profile ↗")))
 	if b := m.decisionBadge(p.DID); b != "" {
 		lines = append(lines, b)
 	} else if p.Viewer.Following != "" {
@@ -1562,15 +1562,7 @@ func statsLine(it bsky.FeedItem) string {
 		likes = errStyle.Render("♥ " + count(s.Likes, "like") + " (you liked this)")
 	}
 	rest := dimStyle.Render(" · " + count(s.Reposts, "repost") + " · " + count(s.Replies, "reply") + " · " + count(s.Quotes, "quote") + " · ")
-	return likes + rest + accentStyle.Render(termtext.OSC8(postLink(it), "open post ↗"))
-}
-
-// postLink is the post's bsky.app address, using the author's handle when known.
-func postLink(it bsky.FeedItem) string {
-	if it.Author.Handle == "" {
-		return bsky.PostURL(it.URI)
-	}
-	return "https://bsky.app/profile/" + it.Author.Handle + "/post/" + it.URI[strings.LastIndex(it.URI, "/")+1:]
+	return likes + rest + accentStyle.Render(termtext.OSC8(it.PostURL(), "open post ↗"))
 }
 
 // recentLines lists the author's latest posts, leaving out cur (shown above as the current post).
@@ -1952,7 +1944,7 @@ func ageLink(it bsky.FeedItem, age string) string {
 	if it.URI == "" {
 		return age + pad
 	}
-	return termtext.OSC8(postLink(it), age) + pad
+	return termtext.OSC8(it.PostURL(), age) + pad
 }
 
 func (m model) listWidth() int {
