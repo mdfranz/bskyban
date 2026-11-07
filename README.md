@@ -161,7 +161,7 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 | `←` | | previous post |
 | `b` | block the author | block the author |
 | `f` | follow the author | follow the author |
-| `F` | browse accounts the author follows | browse accounts the author follows |
+| `F` | browse accounts the author follows (`←` `→` move between them, `↑` `↓` scroll their posts) | same |
 | `k` / `U` | keep / undo | keep / undo |
 | `u` | unfollow the author (press twice) | unfollow the author (press twice) |
 | `r` | reply to the selected post | reply to this post |

@@ -3,11 +3,9 @@ package tui
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mdfranz/bskyban/internal/bsky"
-	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
 type followsBrowser struct {
@@ -61,23 +59,39 @@ func (m model) applyFollowsPage(msg followsPageMsg) (tea.Model, tea.Cmd) {
 	}
 	b.accounts = append(b.accounts, msg.accounts...)
 	b.cursor, b.loaded, m.err = msg.cursor, true, nil
-	return m, nil
+	return m, m.prefetch()
 }
 
+// followsKey is the Reposts tab's keys: ← → move between the accounts, ↑ ↓ scroll
+// the selected account's recent posts.
 func (m model) followsKey(key string) (model, tea.Cmd) {
 	b := m.follows
+	if next, ok := m.scrollKeys(key); ok {
+		next.scroll = next.clampScroll(next.scroll)
+		return next, nil
+	}
+	move := func(i int) (model, tea.Cmd) {
+		b.selected = min(max(i, 0), max(len(b.accounts)-1, 0))
+		m.scroll, m.status, m.err = 0, "", nil
+		cmd := m.prefetch()
+		if b.loaded && b.cursor != "" && b.selected >= len(b.accounts)-2 {
+			var load tea.Cmd
+			m, load = m.loadFollows()
+			cmd = tea.Batch(cmd, load)
+		}
+		return m, cmd
+	}
 	switch key {
 	case "esc", "backspace", "q":
-		m.follows, m.err = nil, nil
-	case "up":
-		b.selected = max(0, b.selected-1)
-	case "down":
-		if b.selected+1 < len(b.accounts) {
-			b.selected++
-		}
-		if b.selected >= len(b.accounts)-1 && b.loaded && b.cursor != "" {
-			return m.loadFollows()
-		}
+		m.follows, m.err, m.scroll = nil, nil, 0
+	case "left", "h":
+		return move(b.selected - 1)
+	case "right", "l":
+		return move(b.selected + 1)
+	case "home":
+		return move(0)
+	case "end":
+		return move(len(b.accounts) - 1)
 	case "R":
 		if !b.loaded || b.cursor != "" {
 			return m.loadFollows()
@@ -95,52 +109,22 @@ func (m model) followsKey(key string) (model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) followsView() string {
+// followsView shows the selected followed account like the Reposts tab does: its
+// profile on the left and its recent posts on the right (rl, from rightLines).
+func (m model) followsView(rl []string) string {
 	b := m.follows
-	var out strings.Builder
-	out.WriteString(headingStyle.Render("Accounts followed by @"+b.actor.Handle) + "\n\n")
 	if len(b.accounts) == 0 {
-		if b.loading {
-			out.WriteString("Loading…\n")
-		} else if b.loaded {
-			out.WriteString("No accounts found.\n")
+		switch {
+		case b.loading:
+			return m.spin.View() + " loading…\n"
+		case b.loaded:
+			return dimStyle.Render("No accounts found.") + "\n"
 		}
-		return out.String()
+		return ""
 	}
-	rows := max((m.height-8)/2, 1)
-	if m.height <= 0 {
-		rows = 20
+	pos := fmt.Sprintf("%d of %d", b.selected+1, len(b.accounts))
+	if b.cursor != "" {
+		pos += "+"
 	}
-	start := max(0, b.selected-rows+1)
-	end := min(len(b.accounts), start+rows)
-	for i := start; i < end; i++ {
-		p := b.accounts[i]
-		name := p.DisplayName
-		if name == "" {
-			name = p.Handle
-		}
-		label := termtext.TruncateWidth(termtext.Sanitize(name+" (@"+p.Handle+")"), max(m.width-4, 10))
-		if i == b.selected {
-			out.WriteString(selStyle.Render("▸ " + label))
-		} else {
-			out.WriteString("  " + label)
-		}
-		out.WriteByte('\n')
-		bio := strings.Join(strings.Fields(termtext.Sanitize(p.Description)), " ")
-		if bio != "" {
-			bio = termtext.TruncateWidth(bio, max(m.width-4, 1))
-			if i == b.selected {
-				out.WriteString(selStyle.Render("  " + bio))
-			} else {
-				out.WriteString(dimStyle.Render("  " + bio))
-			}
-			out.WriteByte('\n')
-		}
-	}
-	if b.loading {
-		out.WriteString(dimStyle.Render("Loading more…") + "\n")
-	} else if b.cursor != "" && end == len(b.accounts) {
-		out.WriteString(dimStyle.Render("↓ load more") + "\n")
-	}
-	return out.String()
+	return m.panelsView(pos, rl)
 }

@@ -8,22 +8,47 @@ import (
 	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
-func TestFollowingDescriptionsFitOneLine(t *testing.T) {
+func TestFollowsBrowserUsesProfileAndPostsPanels(t *testing.T) {
 	m, _ := followingModel(t)
-	m.width, m.height = 40, 12
 	m.follows = &followsBrowser{actor: bsky.Profile{Handle: "friend"}, accounts: []bsky.Profile{
-		{Handle: "first.example", DisplayName: "First", Description: "First line\nsecond line " + strings.Repeat("more ", 30)},
-		{Handle: "second.example", DisplayName: "Second", Description: "Another bio"},
-	}, selected: 1, loaded: true}
-	view := termtext.StripANSI(m.followsView())
-	lines := strings.Split(strings.TrimSpace(view), "\n")
-	if len(lines) != 6 || !strings.Contains(view, "First line second line") || !strings.Contains(view, "Another bio") {
-		t.Fatalf("expected one bio line per account: %q", view)
-	}
-	for _, line := range lines {
-		if strings.Contains(line, "more more more more more more more more") {
-			t.Fatalf("bio was not truncated: %q", line)
+		{DID: "did:first", Handle: "first.example", DisplayName: "First"},
+		{DID: "did:second", Handle: "second.example", DisplayName: "Second"},
+	}, loaded: true}
+	posts := []bsky.Post{{Text: "newest from first", CreatedAt: "2026-11-01T06:00:00Z"}}
+	m.posts["did:first"] = &posts
+	view := termtext.StripLinks(termtext.StripANSI(m.View()))
+	for _, want := range []string{"Accounts followed by @friend", "First", "@first.example", "1 of 2", "Recent posts", "newest from first"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view missing %q:\n%s", want, view)
 		}
+	}
+}
+
+func TestFollowsBrowserKeys(t *testing.T) {
+	m, _ := followingModel(t)
+	accounts := make([]bsky.Profile, 3)
+	for i := range accounts {
+		accounts[i] = bsky.Profile{DID: "did:" + string(rune('a'+i)), Handle: string(rune('a'+i)) + ".example"}
+	}
+	m.follows = &followsBrowser{actor: bsky.Profile{Handle: "friend"}, accounts: accounts, loaded: true}
+	var long []bsky.Post
+	for range 30 {
+		long = append(long, bsky.Post{Text: "post", CreatedAt: "2026-11-01T06:00:00Z"})
+	}
+	m.posts["did:a"] = &long
+
+	m = press(m, "down")
+	if m.follows.selected != 0 || m.scroll == 0 {
+		t.Errorf("down should scroll the posts, not move: selected=%d scroll=%d", m.follows.selected, m.scroll)
+	}
+	m = press(m, "right")
+	if m.follows.selected != 1 || m.scroll != 0 {
+		t.Errorf("right should move to the next account and reset the scroll: selected=%d scroll=%d", m.follows.selected, m.scroll)
+	}
+	m = press(m, "left")
+	m = press(m, "left")
+	if m.follows.selected != 0 {
+		t.Errorf("left stops at the first account: %d", m.follows.selected)
 	}
 }
 
@@ -37,19 +62,19 @@ func TestBrowseFollowingPages(t *testing.T) {
 	}
 	next, _ = m.Update(cmd())
 	m = next.(model)
-	if !strings.Contains(m.View(), "First (@first.example)") {
+	if !strings.Contains(m.View(), "@first.example") {
 		t.Fatalf("first page missing: %s", m.View())
 	}
-	next, cmd = m.Update(key("down"))
+	next, cmd = m.Update(key("right"))
 	m = next.(model)
 	if cmd == nil {
-		t.Fatal("down at end should load the next page")
+		t.Fatal("moving to the end should load the next page")
 	}
 	next, _ = m.Update(cmd())
 	m = next.(model)
-	next, _ = m.Update(key("down"))
+	next, _ = m.Update(key("right"))
 	m = next.(model)
-	if !strings.Contains(m.View(), "▸ Second (@second.example)") {
+	if !strings.Contains(m.View(), "@second.example") {
 		t.Fatalf("second page missing: %s", m.View())
 	}
 	next, _ = m.Update(key("enter"))

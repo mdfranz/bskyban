@@ -420,8 +420,14 @@ func (m model) fetchProfile(did string) tea.Cmd {
 // of the current timeline post. Fetched details replace the summary when loaded.
 func (m model) subject() (bsky.Profile, bool) {
 	var p bsky.Profile
-	switch m.active() {
-	case tabCandidates:
+	switch {
+	case m.follows != nil:
+		b := m.follows
+		if b.selected < 0 || b.selected >= len(b.accounts) {
+			return bsky.Profile{}, false
+		}
+		p = b.accounts[b.selected]
+	case m.active() == tabCandidates:
 		if m.idx < 0 || m.idx >= len(m.list) {
 			return bsky.Profile{}, false
 		}
@@ -441,8 +447,12 @@ func (m model) subject() (bsky.Profile, bool) {
 // prefetch loads the current and next profiles (and recent posts).
 func (m model) prefetch() tea.Cmd {
 	var cmds []tea.Cmd
-	switch m.active() {
-	case tabCandidates:
+	switch {
+	case m.follows != nil:
+		for i := m.follows.selected; i <= m.follows.selected+1 && i < len(m.follows.accounts); i++ {
+			cmds = append(cmds, m.fetchProfile(m.follows.accounts[i].DID))
+		}
+	case m.active() == tabCandidates:
 		for i := m.idx; i <= m.idx+1 && i < len(m.list); i++ {
 			cmds = append(cmds, m.fetchProfile(m.list[i].DID))
 		}
@@ -472,7 +482,10 @@ func (m model) needsSpin() bool {
 	if m.loading || m.followLoading || m.busy {
 		return true
 	}
-	if m.active() == tabCandidates || m.inPost {
+	if m.follows != nil && m.follows.loading && len(m.follows.accounts) == 0 {
+		return true
+	}
+	if m.follows != nil || m.active() == tabCandidates || m.inPost {
 		if p, ok := m.subject(); ok {
 			return m.profiles[p.DID] == nil || m.posts[p.DID] == nil
 		}
@@ -1394,6 +1407,11 @@ func (m model) panelWidths() (left, right int, stacked bool) {
 func (m model) rightLines() []string {
 	_, rw, _ := m.panelWidths()
 	switch {
+	case m.follows != nil:
+		if p, ok := m.subject(); ok {
+			return m.recentLines(p.DID, rw, bsky.Post{})
+		}
+		return nil
 	case m.active() == tabCandidates && !m.loading && m.idx < len(m.list):
 		return m.candRight(rw)
 	case m.active() == tabFollowing && m.inPost && m.cur < len(m.items):
@@ -1648,6 +1666,9 @@ func (m model) scrollPos(rl []string) string {
 
 // tabBar is the title row; rl (the right panel's lines) gives the scroll position.
 func (m model) tabBar(rl []string) string {
+	if m.follows != nil {
+		return titleStyle.Render("bskyban") + "   " + headingStyle.Render("Accounts followed by @"+termtext.Sanitize(m.follows.actor.Handle)) + m.scrollPos(rl)
+	}
 	if len(m.tabs) == 1 {
 		title := titleStyle.Render("bskyban " + m.title)
 		if n := len(m.newPosts); n > 0 {
@@ -1685,7 +1706,7 @@ func (m model) hintItems() []string {
 		if m.err != nil {
 			return []string{"R retry", "esc back"}
 		}
-		return []string{"↑ ↓ move", "enter open profile", "esc back"}
+		return []string{"← → move", "↑ ↓ scroll", "enter open profile", "esc back"}
 	}
 	if m.pending != nil {
 		return []string{"r retry saving (actions and quit wait for a successful save)"}
@@ -1764,7 +1785,7 @@ func (m model) hint() string { return strings.Join(m.hintLines(), "\n") }
 func (m model) View() string {
 	var b strings.Builder
 	var rl []string // built once: the tab bar's scroll position and the panels both use it
-	if !m.composing && m.follows == nil {
+	if !m.composing {
 		rl = m.rightLines()
 	}
 	b.WriteString(m.tabBar(rl) + "\n\n")
@@ -1810,7 +1831,7 @@ func (m model) View() string {
 // content is the active tab's main area; rl is the right panel from rightLines.
 func (m model) content(rl []string) string {
 	if m.follows != nil {
-		return m.followsView()
+		return m.followsView(rl)
 	}
 	var b strings.Builder
 	switch m.active() {
