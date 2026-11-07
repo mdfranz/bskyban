@@ -430,24 +430,29 @@ func (m model) subject() (bsky.Profile, bool) {
 	return p, true
 }
 
+// currentAndNext is did of xs[i] and xs[i+1], whichever exist.
+func currentAndNext[T any](xs []T, i int, did func(T) string) []string {
+	var out []string
+	for j := max(i, 0); j <= i+1 && j < len(xs); j++ {
+		out = append(out, did(xs[j]))
+	}
+	return out
+}
+
 // prefetch loads the current and next profiles (and recent posts).
 func (m model) prefetch() tea.Cmd {
-	var cmds []tea.Cmd
+	var dids []string
 	switch {
 	case m.follows != nil:
-		for i := m.follows.selected; i <= m.follows.selected+1 && i < len(m.follows.accounts); i++ {
-			cmds = append(cmds, m.fetchProfile(m.follows.accounts[i].DID))
-		}
+		dids = currentAndNext(m.follows.accounts, m.follows.selected, func(p bsky.Profile) string { return p.DID })
 	case m.active() == tabCandidates:
-		for i := m.idx; i <= m.idx+1 && i < len(m.list); i++ {
-			cmds = append(cmds, m.fetchProfile(m.list[i].DID))
-		}
-	default:
-		if m.inPost {
-			for i := m.cur; i <= m.cur+1 && i < len(m.items); i++ {
-				cmds = append(cmds, m.fetchProfile(m.items[i].Author.DID))
-			}
-		}
+		dids = currentAndNext(m.list, m.idx, func(p bsky.Profile) string { return p.DID })
+	case m.inPost:
+		dids = currentAndNext(m.items, m.cur, func(it bsky.FeedItem) string { return it.Author.DID })
+	}
+	cmds := make([]tea.Cmd, len(dids))
+	for i, did := range dids {
+		cmds[i] = m.fetchProfile(did)
 	}
 	return tea.Batch(cmds...)
 }
@@ -1450,16 +1455,23 @@ func styleLines(lines []string, st lipgloss.Style) []string {
 }
 
 // decisionBadge shows what was decided about did earlier, if anything.
-func (m model) decisionBadge(did string) string {
-	switch m.a.State.Entries[did].Decision {
+// decisionStyle is how a recorded decision is coloured; ok is false when there is none.
+func decisionStyle(decision string) (st lipgloss.Style, ok bool) {
+	switch decision {
 	case store.Blocked:
-		return errStyle.Render("● blocked")
-	case store.Followed:
-		return okStyle.Render("● followed")
-	case store.Kept:
-		return okStyle.Render("● kept")
+		return errStyle, true
+	case store.Followed, store.Kept:
+		return okStyle, true
 	case store.Skipped:
-		return dimStyle.Render("● skipped")
+		return dimStyle, true
+	}
+	return st, false
+}
+
+func (m model) decisionBadge(did string) string {
+	d := m.a.State.Entries[did].Decision
+	if st, ok := decisionStyle(d); ok {
+		return st.Render("● " + d)
 	}
 	return ""
 }
@@ -1983,13 +1995,10 @@ func (m model) itemLines(i, w int) []string {
 	if isFresh {
 		add("new", fresh)
 	}
-	switch m.a.State.Entries[it.Author.DID].Decision {
-	case store.Blocked:
-		add("blocked", errStyle)
-	case store.Followed:
-		add("followed", okStyle)
-	case store.Kept:
-		add("kept", okStyle)
+	if d := m.a.State.Entries[it.Author.DID].Decision; d != store.Skipped { // skipped stays off the list
+		if st, ok := decisionStyle(d); ok {
+			add(d, st)
+		}
 	}
 	tailPlain, tail := strings.Join(tagsPlain, " "), strings.Join(tags, " ")
 	who = termtext.TruncateWidth(who, max(w-(2+gw+5+1+1+lipgloss.Width(tailPlain)), 10))
