@@ -153,8 +153,8 @@ the parent of a reply, quoted posts, image links and recent posts by the author.
 
 | Key | List | Post view |
 |---|---|---|
-| `↑` / `↓` | move | previous / next post |
-| `PgUp` / `PgDn` | move a page | scroll the panel |
+| `↑` / `↓` | move | scroll the panel |
+| `PgUp` / `PgDn` | move a page | scroll the panel a page |
 | `→` | open post | next post |
 | `Enter` | open link picker | open link picker |
 | `Esc` / `Backspace` | | back to list |

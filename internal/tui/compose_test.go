@@ -197,20 +197,22 @@ func TestLikeAndReplyOnTheRepostedPostInTheRepostsTab(t *testing.T) {
 	}
 }
 
-func TestUpDownStepThroughPostsInPostView(t *testing.T) {
+func TestLeftRightStepThroughPostsInPostView(t *testing.T) {
 	m, _ := followingModel(t)
 	m = press(m, "enter")
-	m = press(m, "down")
+	m = press(m, "right")
 	if m.cur != 1 || !m.inPost {
-		t.Fatalf("down should open the next post: cur=%d inPost=%v", m.cur, m.inPost)
+		t.Fatalf("right should open the next post: cur=%d inPost=%v", m.cur, m.inPost)
 	}
-	m = press(m, "up")
+	m = press(m, "left")
 	if m.cur != 0 {
-		t.Errorf("up should go back: cur=%d", m.cur)
+		t.Errorf("left should go back: cur=%d", m.cur)
 	}
-	m = press(m, "pgdown")
-	if m.cur != 0 || m.scroll < 0 {
-		t.Errorf("pgdown scrolls the panel, not the posts: cur=%d", m.cur)
+	for _, k := range []string{"down", "pgdown", "up", "pgup"} {
+		m = press(m, k)
+		if m.cur != 0 || !m.inPost {
+			t.Errorf("%s scrolls the panel, not the posts: cur=%d inPost=%v", k, m.cur, m.inPost)
+		}
 	}
 }
 

@@ -25,6 +25,9 @@ var (
 
 const panelGap = 4
 
+// recentPostCount is how many of an account's latest posts the right panel loads; ↑/↓ scroll through them.
+const recentPostCount = 25
+
 type tabID int
 
 const (
@@ -407,7 +410,7 @@ func (m model) fetchProfile(did string) tea.Cmd {
 			return profileMsg{p, did, err}
 		},
 		func() tea.Msg {
-			posts, err := c.GetRecentPosts(context.Background(), did, 5)
+			posts, err := c.GetRecentPosts(context.Background(), did, recentPostCount)
 			return postsMsg{did, posts, err}
 		},
 	)
@@ -1146,9 +1149,10 @@ func (m model) candKey(key string) (model, tea.Cmd) {
 }
 
 func (m model) browseKey(key, confirm string) (model, tea.Cmd) {
-	if m.inPost && (key == "pgup" || key == "pgdown") { // ↑ ↓ step through posts, like in the list
-		next, _ := m.scrollKeys(key)
-		return next, nil
+	if m.inPost { // ↑ ↓ PgUp PgDn scroll the panel, ← → step through posts, like the Reposts tab
+		if next, ok := m.scrollKeys(key); ok {
+			return next, nil
+		}
 	}
 	setCur := func(i int) {
 		m.cur = min(max(i, 0), max(len(m.items)-1, 0))
@@ -1700,7 +1704,7 @@ func (m model) hintItems() []string {
 	case m.active() == tabCandidates:
 		items = []string{"← → move", "↑ ↓ scroll", "b block", "f follow", "k keep", "s skip", "u unfollow", "U undo"}
 	case m.inPost:
-		items = []string{"↑ ↓ prev/next", "PgUp PgDn scroll", "esc back", "b block", "f follow", "k keep", "u unfollow", "U undo"}
+		items = []string{"← → prev/next", "↑ ↓ scroll", "esc back", "b block", "f follow", "k keep", "u unfollow", "U undo"}
 	default:
 		items = []string{"↑ ↓ move", "enter open", "b block", "f follow", "k keep", "u unfollow", "U undo"}
 		if m.timeline != nil {
