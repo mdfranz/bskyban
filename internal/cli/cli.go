@@ -304,7 +304,7 @@ func (a *CLI) cmdPost(ctx context.Context, args []string) (err error) {
 	if n := uniseg.GraphemeClusterCount(text); n > bsky.MaxPostGraphemes {
 		return fmt.Errorf("post is %d characters; the limit is %d", n, bsky.MaxPostGraphemes)
 	}
-	ev := store.AuditEvent{Action: "post", DID: a.Client.DID, Handle: a.Client.Handle, DryRun: *dry, Detail: termtext.TruncateWidth(strings.Join(strings.Fields(text), " "), 200)}
+	ev := store.AuditEvent{Action: "post", DID: a.Client.DID, Handle: a.Client.Handle, DryRun: *dry, Detail: termtext.TruncateWidth(termtext.OneLine(text), 200)}
 	defer func() {
 		ev.OK = err == nil
 		if err != nil {
@@ -619,11 +619,8 @@ func formatPost(p bsky.Post, max int) string {
 	case p.Reply:
 		tag = "[reply] "
 	}
-	age := "?"
-	if t, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
-		age = termtext.HumanAge(time.Since(t))
-	}
-	text := strings.Join(strings.Fields(termtext.Sanitize(p.Text)), " ")
+	age := termtext.HumanAgeISO(p.CreatedAt)
+	text := termtext.OneLine(termtext.Sanitize(p.Text))
 	if r := []rune(text); max > 0 && len(r) > max {
 		text = string(r[:max-1]) + "…"
 	}

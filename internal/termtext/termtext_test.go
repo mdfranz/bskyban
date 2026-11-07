@@ -3,6 +3,7 @@ package termtext
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSanitize(t *testing.T) {
@@ -93,5 +94,20 @@ func TestMarkersAreNotStrandedAtLineEnd(t *testing.T) {
 				t.Errorf("marker stranded at a line end: %q", Wrap(text, 10))
 			}
 		}
+	}
+}
+
+func TestOneLine(t *testing.T) {
+	if got := OneLine("  a\n\tb   c \r\n"); got != "a b c" {
+		t.Errorf("OneLine = %q", got)
+	}
+}
+
+func TestHumanAgeISO(t *testing.T) {
+	if got := HumanAgeISO("not a time"); got != "?" {
+		t.Errorf("bad timestamp = %q, want ?", got)
+	}
+	if got := HumanAgeISO(time.Now().Add(-3 * time.Hour).UTC().Format(time.RFC3339)); got != "3h" {
+		t.Errorf("3 hours ago = %q", got)
 	}
 }

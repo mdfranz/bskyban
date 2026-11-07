@@ -923,7 +923,7 @@ func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) applyPosted(msg postedMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	ev := store.AuditEvent{Action: "post", DID: m.a.Client.DID, Handle: m.a.Client.Handle, Source: "tui:following", OK: msg.err == nil, Record: msg.uri,
-		Detail: termtext.TruncateWidth(strings.Join(strings.Fields(msg.text), " "), 200)}
+		Detail: termtext.TruncateWidth(termtext.OneLine(msg.text), 200)}
 	if msg.reply != nil {
 		ev.Via = "reply to " + msg.reply.Parent.URI
 	}
@@ -1065,7 +1065,7 @@ func (m model) applyDeleted(msg deletedMsg) (tea.Model, tea.Cmd) {
 	m.busy = false
 	it := msg.item
 	ev := store.AuditEvent{Action: "delete-post", DID: m.a.Client.DID, Handle: m.a.Client.Handle, Source: "tui:following", OK: msg.err == nil, Record: it.URI,
-		Detail: termtext.TruncateWidth(strings.Join(strings.Fields(it.Post.Text), " "), 200)}
+		Detail: termtext.TruncateWidth(termtext.OneLine(it.Post.Text), 200)}
 	if msg.err != nil {
 		ev.Error = msg.err.Error()
 		m.audit(ev)
@@ -1611,7 +1611,7 @@ func (m model) postRight(cw int) []string {
 	if it.By != "" {
 		by := "↻ Reposted by @" + it.By
 		if it.RepostedAt != "" {
-			by += " · " + ageOf(it.RepostedAt) + " ago"
+			by += " · " + termtext.HumanAgeISO(it.RepostedAt) + " ago"
 		}
 		lines = append(lines, accentStyle.Render(by), "")
 	}
@@ -1865,7 +1865,7 @@ func (m model) composeView() string {
 	var b strings.Builder
 	if r := m.replyTo; r != nil {
 		b.WriteString(headingStyle.Render("Reply to @"+termtext.Sanitize(r.Author.Handle)) + "\n")
-		quote := strings.Join(strings.Fields(termtext.Sanitize(r.Post.Text)), " ")
+		quote := termtext.OneLine(termtext.Sanitize(r.Post.Text))
 		if w := m.width - 4; w > 10 {
 			quote = termtext.TruncateWidth(quote, w)
 		}
@@ -1927,7 +1927,7 @@ func (m model) bodyLines(it bsky.FeedItem, bw int) (text, quote []string) {
 	if c, ok := m.clips[k]; ok {
 		return c.text, c.quote
 	}
-	c := clipped{clip(it.Post.Preview(), bw, previewLines), clip(strings.Join(strings.Fields(it.Post.Quote), " "), bw-2, quoteLines)}
+	c := clipped{clip(it.Post.Preview(), bw, previewLines), clip(termtext.OneLine(it.Post.Quote), bw-2, quoteLines)}
 	if m.clips != nil && it.URI != "" { // without a URI, items cannot be told apart
 		m.clips[k] = c
 	}
@@ -1955,14 +1955,6 @@ func ageLink(it bsky.FeedItem, age string) string {
 	return termtext.OSC8(postLink(it), age) + pad
 }
 
-// ageOf is how long ago s (RFC 3339) was, or "?".
-func ageOf(s string) string {
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return termtext.HumanAge(time.Since(t))
-	}
-	return "?"
-}
-
 func (m model) listWidth() int {
 	if m.width <= 0 {
 		return 110
@@ -1974,9 +1966,9 @@ func (m model) listWidth() int {
 // text (ending in … if there is more), and a blank separator line.
 func (m model) itemLines(i, w int) []string {
 	it := m.items[i]
-	age := ageOf(it.Post.CreatedAt)
+	age := termtext.HumanAgeISO(it.Post.CreatedAt)
 	if it.By != "" && it.RepostedAt != "" {
-		age = ageOf(it.RepostedAt) // when it reached your timeline; the post's own age is a tag
+		age = termtext.HumanAgeISO(it.RepostedAt) // when it reached your timeline; the post's own age is a tag
 	}
 	threaded := m.inThread(i)
 	gutter, gw := "", 0 // a reply right under its thread is indented beneath it
@@ -1995,7 +1987,7 @@ func (m model) itemLines(i, w int) []string {
 	}
 	if it.By != "" {
 		add("↻ reposted by @"+it.By, accentStyle)
-		if posted := ageOf(it.Post.CreatedAt); it.RepostedAt != "" && posted != age {
+		if posted := termtext.HumanAgeISO(it.Post.CreatedAt); it.RepostedAt != "" && posted != age {
 			add("· written "+posted+" ago", headingStyle.Bold(false).Italic(true))
 		}
 	}
@@ -2101,10 +2093,7 @@ func renderPost(p bsky.Post, w int, full bool) []string {
 	case p.Reply:
 		kind = " · reply"
 	}
-	age := "?"
-	if t, err := time.Parse(time.RFC3339, p.CreatedAt); err == nil {
-		age = termtext.HumanAge(time.Since(t))
-	}
+	age := termtext.HumanAgeISO(p.CreatedAt)
 	lines := []string{dimStyle.Render(age + " ago" + kind)}
 	indent := "  "
 	body := func(text string, st *lipgloss.Style, prefix string) {

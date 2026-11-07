@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mdfranz/bskyban/internal/bsky"
+	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
 // stateDir is where bskyban keeps everything it writes: decisions and the audit
@@ -51,7 +52,7 @@ type Snapshot struct {
 // fetch; summaries (timeline authors) have no counts, so those are left out
 // rather than logged as a misleading 0.
 func SnapshotOf(p bsky.Profile, detailed bool) *Snapshot {
-	bio := strings.Join(strings.Fields(p.Description), " ")
+	bio := termtext.OneLine(p.Description)
 	if r := []rune(bio); len(r) > 200 {
 		bio = string(r[:200])
 	}
