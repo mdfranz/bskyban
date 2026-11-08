@@ -45,7 +45,7 @@ cmd/bskyban  ->  internal/tui, internal/cli  ->  internal/app  ->  internal/stor
 | `internal/bsky` | `Client` (XRPC), the types it returns (`Profile`, `Post`, `FeedItem`, `Repost`, ...) in `profile.go`, `post.go`, `feed.go`, and record writes in `records.go` |
 | `internal/store` | `State` (decisions per DID in `state.json`) and `Audit` (append-only `audit.jsonl`, `AuditEvent`, `Snapshot`), plus the default file locations |
 | `internal/app` | `App` (client + state + audit): which followers and repost authors are new (`Followers`, `IsNew`, `FeedCandidates`) and how a decision maps to a block/follow record (`CreateFor`, `DeleteFor`, `IsRemote`, `ViewerURI`) |
-| `internal/tui` | The Bubble Tea `model` for all three TUIs (`ui.go`), the link picker (`picker.go`), browser launch (`images.go`), colour themes (`theme.go`), and the `RunFeed`/`RunPosts`/`RunReview` entry points (`tui.go`) |
+| `internal/tui` | The Bubble Tea `model` for all three TUIs: model, `Update`, `View` and key dispatch (`ui.go`); account decisions, unfollow and undo (`decide.go`); composing, replying, liking and deleting (`compose.go`); background refresh, the pending queue and `--fancy` (`refresh.go`); the profile and posts panels (`panels.go`); the timeline list (`list.go`); the `F` followed-accounts browser (`follows.go`); the link picker (`picker.go`); browser launch (`images.go`); colour themes (`theme.go`); and the `RunFeed`/`RunPosts`/`RunReview` entry points (`tui.go`) |
 | `internal/cli` | Every non-TUI subcommand (`cli.go`), including `act` (block/keep/follow/unblock/unfollow with `--dry-run`), the `log` subcommand (`logcmd.go`), usage text and plain-text formatting |
 | `internal/termtext` | Making untrusted text safe for a terminal: sanitizing, URL detection, OSC 8 hyperlinks, link-preserving wrapping, width truncation |
 | `internal/testpds` | A fake Bluesky server and test helpers shared by the TUI and CLI tests |
@@ -106,7 +106,7 @@ sequenceDiagram
 
 Because the audit write is deferred, every attempt is logged, including dry runs and failures. The remote change happens *before* the local state change, so a failed remote call leaves state untouched, and a failed local save after a successful remote call is surfaced (see Resilience).
 
-`App.FeedCandidates` builds the Reposts queue: it takes the reposts found in the timeline (`GetTimelineReposts`, `--pages` pages of 100 items), keeps the **original author** of each, drops anyone you follow, have blocked or already decided on (`IsNew`), and collapses duplicates while remembering every `By` handle that reposted them (`app.RepostCtx`).
+`App.FeedCandidates` builds the Reposts queue: it reads `--pages` pages of 100 timeline items (`GetTimeline`) and takes the reposts among them (`MergeRepostCandidates`, which the TUI also uses when a refresh brings in new items), keeps the **original author** of each, drops anyone you follow, have blocked or already decided on (`IsNew`), and collapses duplicates while remembering every `By` handle that reposted them (`app.RepostCtx`).
 
 ### 5. The TUI (`internal/tui`)
 

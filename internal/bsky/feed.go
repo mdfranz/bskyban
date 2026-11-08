@@ -187,6 +187,9 @@ type PostStats struct {
 	Quotes  int `json:"quoteCount"`
 }
 
+// Ref is the post's URI and CID, which is what a like, repost or quote points at.
+func (it FeedItem) Ref() PostRef { return PostRef{it.URI, it.CID} }
+
 // ReplyTo is the reply reference for answering this post.
 func (it FeedItem) ReplyTo() *ReplyRef {
 	parent := PostRef{it.URI, it.CID}
@@ -244,47 +247,26 @@ func (c *Client) GetOwnPosts(ctx context.Context, cursor string, limit int) ([]F
 	return items, next, nil
 }
 
-// Repost is a post someone you follow reposted, with its original author.
-type Repost struct {
-	Item   FeedItem // the reposted post itself, for liking or replying to it
-	Post   Post
-	Author Profile // original author
-	By     Profile // who reposted it
-}
+// RKey is the record key at the end of an at:// URI.
+func RKey(uri string) string { return uri[strings.LastIndex(uri, "/")+1:] }
 
-// GetTimelineReposts scans up to pages pages (100 items each) of your home
-// timeline, newest first, and returns the reposts in it.
-func (c *Client) GetTimelineReposts(ctx context.Context, pages int) ([]Repost, error) {
-	var reposts []Repost
-	cursor := ""
-	for i := 0; i < max(pages, 1); i++ {
-		q := url.Values{"limit": {"100"}}
-		if cursor != "" {
-			q.Set("cursor", cursor)
-		}
-		entries, next, err := c.feedPage(ctx, "app.bsky.feed.getTimeline", q)
-		if err != nil {
-			return nil, err
-		}
-		for _, e := range entries {
-			if e.isRepost() {
-				reposts = append(reposts, Repost{Item: e.item(), Post: e.toPost(), Author: e.Post.Author, By: e.Reason.By})
-			}
-		}
-		if next == "" || len(entries) == 0 {
-			break
-		}
-		cursor = next
-	}
-	return reposts, nil
-}
+// ProfileURL is an account's bsky.app page; actor is a handle or a DID.
+func ProfileURL(actor string) string { return "https://bsky.app/profile/" + actor }
 
 // PostURL turns at://did/app.bsky.feed.post/rkey into its bsky.app link.
 func PostURL(uri string) string {
-	if i := strings.LastIndex(uri, "/"); i >= 0 && strings.HasPrefix(uri, "at://") {
+	if strings.HasPrefix(uri, "at://") {
 		if parts := strings.Split(strings.TrimPrefix(uri, "at://"), "/"); len(parts) == 3 {
-			return "https://bsky.app/profile/" + parts[0] + "/post/" + uri[i+1:]
+			return ProfileURL(parts[0]) + "/post/" + parts[2]
 		}
 	}
 	return uri
+}
+
+// PostURL is the post's bsky.app address, using the author's handle when known.
+func (it FeedItem) PostURL() string {
+	if it.Author.Handle == "" {
+		return PostURL(it.URI)
+	}
+	return ProfileURL(it.Author.Handle) + "/post/" + RKey(it.URI)
 }

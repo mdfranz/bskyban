@@ -197,20 +197,22 @@ func TestLikeAndReplyOnTheRepostedPostInTheRepostsTab(t *testing.T) {
 	}
 }
 
-func TestUpDownStepThroughPostsInPostView(t *testing.T) {
+func TestLeftRightStepThroughPostsInPostView(t *testing.T) {
 	m, _ := followingModel(t)
 	m = press(m, "enter")
-	m = press(m, "down")
+	m = press(m, "right")
 	if m.cur != 1 || !m.inPost {
-		t.Fatalf("down should open the next post: cur=%d inPost=%v", m.cur, m.inPost)
+		t.Fatalf("right should open the next post: cur=%d inPost=%v", m.cur, m.inPost)
 	}
-	m = press(m, "up")
+	m = press(m, "left")
 	if m.cur != 0 {
-		t.Errorf("up should go back: cur=%d", m.cur)
+		t.Errorf("left should go back: cur=%d", m.cur)
 	}
-	m = press(m, "pgdown")
-	if m.cur != 0 || m.scroll < 0 {
-		t.Errorf("pgdown scrolls the panel, not the posts: cur=%d", m.cur)
+	for _, k := range []string{"down", "pgdown", "up", "pgup"} {
+		m = press(m, k)
+		if m.cur != 0 || !m.inPost {
+			t.Errorf("%s scrolls the panel, not the posts: cur=%d inPost=%v", k, m.cur, m.inPost)
+		}
 	}
 }
 
@@ -235,7 +237,7 @@ func TestCurrentPostIsMarkedAndNotRepeatedInRecentPosts(t *testing.T) {
 func TestHIsHeartInTheFeedButStillMovesInReview(t *testing.T) {
 	m, f := feedWithTimeline(t)
 	m.items[0].URI, m.items[0].CID = "at://did:friend/app.bsky.feed.post/1", "c1"
-	m = press(m, "enter") // open the post; h used to mean "previous" here
+	m = press(m, "right") // open the post; h used to mean "previous" here
 	m = step(m, key("h"))
 	if f.Joined() != "like" || m.cur != 0 {
 		t.Errorf("h should like and stay on the post: calls=%q cur=%d", f.Joined(), m.cur)
@@ -247,7 +249,7 @@ func TestHIsHeartInTheFeedButStillMovesInReview(t *testing.T) {
 
 func TestLNoLongerMovesRightInTheFeedButDoesInReview(t *testing.T) {
 	m, _ := feedWithTimeline(t)
-	m = press(m, "enter")
+	m = press(m, "right")
 	m = press(m, "l")
 	if m.cur != 0 {
 		t.Errorf("l should do nothing in the Following post view: cur=%d", m.cur)
@@ -282,5 +284,63 @@ func TestLNoLongerMovesRightInTheFeedButDoesInReview(t *testing.T) {
 	r = press(r, "h")
 	if r.idx != 0 {
 		t.Errorf("h moves left in follower review: idx=%d", r.idx)
+	}
+}
+
+func shareModel(t *testing.T) (model, *testpds.PDS) {
+	m, f := feedWithTimeline(t)
+	m.items[0].URI, m.items[0].CID = "at://did:friend/app.bsky.feed.post/1", "cid1"
+	next, _ := m.Update(key("t"))
+	m = next.(model)
+	if !m.composing || m.quoting == nil || m.replyTo != nil {
+		t.Fatalf("t should open a share: composing=%v quoting=%v", m.composing, m.quoting)
+	}
+	return m, f
+}
+
+func TestShareWithCommentQuotesThePost(t *testing.T) {
+	m, f := shareModel(t)
+	if v := m.View(); !strings.Contains(v, "Share @friend.bsky.social's post") || !strings.Contains(v, "hello world") {
+		t.Errorf("view:\n%s", v)
+	}
+	m = typeText(m, "worth reading")
+	m = step(m, key("enter"))
+	if m.composing || m.quoting != nil || m.err != nil || f.Joined() != "post" {
+		t.Fatalf("composing=%v quoting=%v calls=%q err=%v", m.composing, m.quoting, f.Joined(), m.err)
+	}
+	rec := f.LastRecord()
+	embed, _ := rec["embed"].(map[string]any)
+	subject, _ := embed["record"].(map[string]any)
+	if rec["text"] != "worth reading" || embed["$type"] != "app.bsky.embed.record" ||
+		subject["uri"] != "at://did:friend/app.bsky.feed.post/1" || subject["cid"] != "cid1" {
+		t.Errorf("record = %v", rec)
+	}
+	if rec["reply"] != nil {
+		t.Errorf("a quote is not a reply: %v", rec)
+	}
+}
+
+func TestShareWithoutCommentIsAPlainRepost(t *testing.T) {
+	m, f := shareModel(t)
+	m = step(m, key("enter"))
+	if m.composing || m.quoting != nil || m.err != nil || f.Joined() != "repost" || m.status != "reposted" {
+		t.Fatalf("composing=%v calls=%q status=%q err=%v", m.composing, f.Joined(), m.status, m.err)
+	}
+	subject, _ := f.LastRecord()["subject"].(map[string]any)
+	if subject["uri"] != "at://did:friend/app.bsky.feed.post/1" || subject["cid"] != "cid1" {
+		t.Errorf("record = %v", f.LastRecord())
+	}
+}
+
+func TestShareEscCancelsAndPlainComposeStillNeedsText(t *testing.T) {
+	m, f := shareModel(t)
+	m = step(m, key("esc"))
+	if m.composing || m.quoting != nil || f.Joined() != "" {
+		t.Errorf("esc should cancel the share: composing=%v quoting=%v calls=%q", m.composing, m.quoting, f.Joined())
+	}
+	m = openCompose(m)
+	m = step(m, key("enter"))
+	if !m.composing || f.Joined() != "" {
+		t.Errorf("an empty new post must not be sent: composing=%v calls=%q", m.composing, f.Joined())
 	}
 }
