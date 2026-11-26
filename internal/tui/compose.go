@@ -37,6 +37,13 @@ func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" && m.quoting != nil { // sharing without a comment is a plain repost
+			_, reposted := m.reposted[m.quoting.URI]
+			if m.quoting.Repost != "" || reposted {
+				m.composing, m.quoting, m.err = false, nil, nil
+				m.input.Blur()
+				m.status = "you already reposted this post"
+				return m, nil
+			}
 			m.busy, m.err = true, nil
 			c, ref := m.a.Client, m.quoting.Ref()
 			return m, func() tea.Msg {
@@ -94,6 +101,12 @@ func (m model) applyPosted(msg postedMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.audit(ev)
+	if msg.repost {
+		if m.reposted == nil {
+			m.reposted = make(map[string]struct{})
+		}
+		m.reposted[msg.quote.URI] = struct{}{}
+	}
 	m.composing, m.replyTo, m.quoting = false, nil, nil
 	m.input.Blur()
 	m.input.SetValue("")

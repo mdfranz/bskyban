@@ -93,9 +93,19 @@ func (m model) followsKey(key string) (model, tea.Cmd) {
 	case "end":
 		return move(len(b.accounts) - 1)
 	case "R":
-		if !b.loaded || b.cursor != "" {
-			return m.loadFollows()
+		var retry tea.Cmd
+		if p, ok := m.subject(); ok {
+			retry = m.fetchProfile(p.DID)
 		}
+		if !b.loaded || b.cursor != "" {
+			var load tea.Cmd
+			m, load = m.loadFollows()
+			retry = tea.Batch(retry, load)
+		}
+		if retry != nil {
+			m.err = nil
+		}
+		return m, retry
 	case "enter", "o":
 		if len(b.accounts) > 0 {
 			p := b.accounts[b.selected]

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -99,5 +100,24 @@ func TestClosedFollowingBrowserIgnoresLateResults(t *testing.T) {
 	next, _ = m.Update(msg)
 	if next.(model).follows != nil {
 		t.Fatal("late response reopened browser")
+	}
+}
+
+func TestFollowsRetryLoadsOnlyMissingPanelData(t *testing.T) {
+	m, _ := followingModel(t)
+	p := bsky.Profile{DID: "did:first", Handle: "first.example"}
+	m.follows = &followsBrowser{accounts: []bsky.Profile{p}, loaded: true}
+	m.profiles[p.DID] = &p
+	next, _ := m.Update(postsMsg{did: p.DID, err: errors.New("temporary failure")})
+	if !strings.Contains(next.View(), "R retry") {
+		t.Fatal("the browser should offer a retry")
+	}
+	next, retry := next.Update(key("R"))
+	m = next.(model)
+	if retry == nil || m.err != nil || m.profiles[p.DID] != &p {
+		t.Fatal("R should retry recent posts and preserve the loaded profile")
+	}
+	if _, ok := retry().(postsMsg); !ok {
+		t.Fatal("R should issue only the posts request")
 	}
 }

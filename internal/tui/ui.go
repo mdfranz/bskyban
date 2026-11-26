@@ -134,8 +134,10 @@ type model struct {
 	input     textinput.Model // the post being written
 
 	busy     bool
-	quitting bool    // wait for the active action to be saved and audited
-	pending  *actMsg // remote action completed, local save needs retrying
+	quitting bool                // wait for the active action to be saved and audited
+	pending  *actMsg             // remote action completed, local save needs retrying
+	reposted map[string]struct{} // successful reposts by post URI during this session
+
 	spin     spinner.Model
 	spinOn   bool                // a spinner tick is scheduled
 	clips    map[clipKey]clipped // wrapped list text, by item and width
@@ -221,22 +223,23 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) fetchProfile(did string) tea.Cmd {
-	if _, ok := m.profiles[did]; ok {
-		return nil
-	}
-	m.profiles[did] = nil // mark in flight
-	m.posts[did] = nil
+	var cmds []tea.Cmd
 	c := m.a.Client
-	return tea.Batch(
-		func() tea.Msg {
+	if _, ok := m.profiles[did]; !ok {
+		m.profiles[did] = nil // mark in flight
+		cmds = append(cmds, func() tea.Msg {
 			p, err := c.GetProfile(context.Background(), did)
 			return profileMsg{p, did, err}
-		},
-		func() tea.Msg {
+		})
+	}
+	if _, ok := m.posts[did]; !ok {
+		m.posts[did] = nil // mark in flight
+		cmds = append(cmds, func() tea.Msg {
 			posts, err := c.GetRecentPosts(context.Background(), did, recentPostCount)
 			return postsMsg{did, posts, err}
-		},
-	)
+		})
+	}
+	return tea.Batch(cmds...)
 }
 
 // subject is the account being looked at: the current candidate, or the author

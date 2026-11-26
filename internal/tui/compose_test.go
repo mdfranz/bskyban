@@ -344,3 +344,24 @@ func TestShareEscCancelsAndPlainComposeStillNeedsText(t *testing.T) {
 		t.Errorf("an empty new post must not be sent: composing=%v calls=%q", m.composing, f.Joined())
 	}
 }
+
+func TestShareWithoutCommentSkipsExistingRepost(t *testing.T) {
+	t.Run("from viewer state", func(t *testing.T) {
+		m, f := shareModel(t)
+		m.quoting.Repost = "at://did:me/app.bsky.feed.repost/1"
+		m = step(m, key("enter"))
+		if m.composing || f.Joined() != "" {
+			t.Fatalf("composing=%v writes=%q", m.composing, f.Joined())
+		}
+	})
+
+	t.Run("from this session", func(t *testing.T) {
+		m, f := shareModel(t)
+		m = step(m, key("enter"))
+		m = press(m, "t")
+		m = step(m, key("enter"))
+		if m.composing || f.Joined() != "repost" {
+			t.Fatalf("composing=%v writes=%q", m.composing, f.Joined())
+		}
+	})
+}

@@ -31,7 +31,8 @@ type feedEntry struct {
 		CID string `json:"cid"`
 		PostStats
 		Viewer struct {
-			Like string `json:"like"`
+			Like   string `json:"like"`
+			Repost string `json:"repost"`
 		} `json:"viewer"`
 		Author Profile         `json:"author"`
 		Embed  json.RawMessage `json:"embed"` // hydrated view
@@ -161,7 +162,7 @@ func (e feedEntry) replyRefs() ReplyRef {
 func (e feedEntry) item() FeedItem {
 	r := e.replyRefs()
 	return FeedItem{Post: e.toPost(), Author: e.Post.Author, URI: e.Post.URI, CID: e.Post.CID, Root: r.Root, Parent: r.Parent,
-		Like: e.Post.Viewer.Like, Stats: e.Post.PostStats}
+		Like: e.Post.Viewer.Like, Repost: e.Post.Viewer.Repost, Stats: e.Post.PostStats}
 }
 
 // FeedItem is one timeline entry: a post, its author, and who reposted it (if anyone).
@@ -174,6 +175,7 @@ type FeedItem struct {
 	Root   PostRef // thread root when the post is a reply
 	Parent PostRef // the post it answers, when it is a reply
 	Like   string  // AT URI of your like of this post, if you liked it
+	Repost string  // AT URI of your repost of this post, if you reposted it
 
 	RepostedAt string // when By reposted it (RFC 3339), for reposts
 	Stats      PostStats
