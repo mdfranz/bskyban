@@ -83,7 +83,7 @@ func (m model) auditEvent(msg actMsg) store.AuditEvent {
 func (m model) auditEvents(msg actMsg) []store.AuditEvent {
 	e := msg.undo
 	main := m.auditEvent(msg)
-	if !msg.isUndo && !msg.isUnfollow && e.prev != nil && app.IsRemote(e.prev.Decision) && e.prev.Decision != e.decision {
+	if !msg.isUndo && !msg.isUnfollow && msg.lifted && e.prev != nil && app.IsRemote(e.prev.Decision) && e.prev.Decision != e.decision {
 		lift := main
 		lift.Action, lift.Detail, lift.Record = liftAction[e.prev.Decision], "lifted by "+e.decision, ""
 		return []store.AuditEvent{lift, main}
@@ -295,8 +295,8 @@ func (m model) decide(p bsky.Profile, decision string) (model, tea.Cmd) {
 				if msg.err = app.DeleteFor(ctx, c, prev.Decision, known); msg.err != nil {
 					return msg
 				}
+				msg.lifted = true
 			}
-			msg.lifted = true
 		}
 		if app.IsRemote(decision) {
 			msg.newURI, msg.err = app.CreateFor(ctx, c, decision, p.DID)
