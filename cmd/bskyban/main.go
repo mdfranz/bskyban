@@ -62,6 +62,8 @@ func realMain() int {
 		if err != nil {
 			return fail(err)
 		}
+	} else if err := cli.Validate(cmd, args); err != nil {
+		return fail(err)
 	}
 
 	handle, pw := os.Getenv("BSKY_HANDLE"), os.Getenv("BSKY_APP_PASSWORD")

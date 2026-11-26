@@ -90,8 +90,62 @@ func (a *CLI) FeedList(ctx context.Context, pages int, backlog, asJSON bool) err
 	return nil
 }
 
-// Run executes a subcommand that needs a login and no terminal UI.
+// Validate checks subcommand names, flags, and required arguments without
+// reading stdin or requiring credentials or network access.
+func Validate(cmd string, args []string) error {
+	switch cmd {
+	case "list":
+		_, _, _, _, err := parseListFlags(args)
+		return err
+	case "baseline":
+		if len(args) != 0 {
+			return fmt.Errorf("%w: baseline takes no arguments", ErrUsage)
+		}
+		return nil
+	case "show":
+		if len(args) != 1 {
+			return fmt.Errorf("%w: show takes exactly one handle or DID", ErrUsage)
+		}
+		return nil
+	case "post":
+		_, rest, err := parseDryRun(cmd, args)
+		if err != nil {
+			return err
+		}
+		if len(rest) == 0 || (rest[0] != "-" && strings.TrimSpace(strings.Join(rest, " ")) == "") {
+			return fmt.Errorf("%w: post needs some text", ErrUsage)
+		}
+		return nil
+	case "delete-post", "like", "unlike":
+		_, rest, err := parseDryRun(cmd, args)
+		if err != nil {
+			return err
+		}
+		if len(rest) == 0 {
+			return fmt.Errorf("%w: %s needs at least one post", ErrUsage, cmd)
+		}
+		return nil
+	case "block", "keep", "unblock", "follow", "unfollow":
+		_, rest, err := parseDryRun(cmd, args)
+		if err != nil {
+			return err
+		}
+		if len(rest) == 0 {
+			return fmt.Errorf("%w: %s needs at least one handle or DID", ErrUsage, cmd)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: unknown command %q", ErrUsage, cmd)
+	}
+}
+
+// Run executes a subcommand that needs a login and no terminal UI. Arguments
+// are checked by Validate first, so the cmd* functions below only re-check
+// what depends on stdin.
 func (a *CLI) Run(ctx context.Context, cmd string, args []string) error {
+	if err := Validate(cmd, args); err != nil {
+		return err
+	}
 	switch cmd {
 	case "list":
 		return a.cmdList(ctx, args)
@@ -117,16 +171,33 @@ func NewFlagSet(name string) *flag.FlagSet {
 	return fs
 }
 
-func (a *CLI) cmdList(ctx context.Context, args []string) error {
+func parseListFlags(args []string) (since int, all, backlog, asJSON bool, err error) {
 	fs := NewFlagSet("list")
-	since := fs.Int("since", 0, "")
-	all := fs.Bool("all", false, "")
-	backlog := fs.Bool("backlog", false, "")
-	asJSON := fs.Bool("json", false, "")
+	fs.IntVar(&since, "since", 0, "")
+	fs.BoolVar(&all, "all", false, "")
+	fs.BoolVar(&backlog, "backlog", false, "")
+	fs.BoolVar(&asJSON, "json", false, "")
 	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+		return 0, false, false, false, fmt.Errorf("%w: %v", ErrUsage, err)
 	}
-	list, err := a.Followers(ctx, *since, *all, *backlog)
+	return since, all, backlog, asJSON, nil
+}
+
+func parseDryRun(cmd string, args []string) (bool, []string, error) {
+	fs := NewFlagSet(cmd)
+	dry := fs.Bool("dry-run", false, "")
+	if err := fs.Parse(args); err != nil {
+		return false, nil, fmt.Errorf("%w: %v", ErrUsage, err)
+	}
+	return *dry, fs.Args(), nil
+}
+
+func (a *CLI) cmdList(ctx context.Context, args []string) error {
+	since, all, backlog, asJSON, err := parseListFlags(args)
+	if err != nil {
+		return err
+	}
+	list, err := a.Followers(ctx, since, all, backlog)
 	if err != nil {
 		return err
 	}
@@ -152,7 +223,7 @@ func (a *CLI) cmdList(ctx context.Context, args []string) error {
 		if status == "" {
 			status = "new"
 		}
-		if *asJSON {
+		if asJSON {
 			_ = enc.Encode(map[string]any{
 				"did": p.DID, "handle": p.Handle, "displayName": p.DisplayName,
 				"status": status, "createdAt": p.CreatedAt, "posts": p.PostsCount,
@@ -186,10 +257,8 @@ func (a *CLI) cmdBaseline(ctx context.Context) error {
 	return nil
 }
 
+// cmdShow expects exactly one argument; Run checks that via Validate.
 func (a *CLI) cmdShow(ctx context.Context, args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("%w: show takes exactly one handle or DID", ErrUsage)
-	}
 	p, err := a.Client.GetProfile(ctx, normalizeActor(args[0]))
 	if err != nil {
 		return err
@@ -220,12 +289,11 @@ func (a *CLI) cmdShow(ctx context.Context, args []string) error {
 }
 
 func (a *CLI) cmdAct(ctx context.Context, cmd string, args []string) error {
-	fs := NewFlagSet(cmd)
-	dry := fs.Bool("dry-run", false, "")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+	dry, rest, err := parseDryRun(cmd, args)
+	if err != nil {
+		return err
 	}
-	ids, err := a.identifiers(fs.Args())
+	ids, err := a.identifiers(rest)
 	if err != nil {
 		return err
 	}
@@ -234,7 +302,7 @@ func (a *CLI) cmdAct(ctx context.Context, cmd string, args []string) error {
 	}
 	var failed int
 	for _, id := range ids {
-		if err := a.act(ctx, cmd, id, *dry); err != nil {
+		if err := a.act(ctx, cmd, id, dry); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", id, err)
 			failed++
 		}
@@ -282,13 +350,12 @@ func (a *CLI) PostsList(ctx context.Context, n int, asJSON bool) error {
 // cmdPost publishes a text post; the text is the arguments joined by spaces,
 // or all of stdin when the only argument is "-".
 func (a *CLI) cmdPost(ctx context.Context, args []string) (err error) {
-	fs := NewFlagSet("post")
-	dry := fs.Bool("dry-run", false, "")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
+	dry, rest, err := parseDryRun("post", args)
+	if err != nil {
+		return err
 	}
 	var text string
-	if rest := fs.Args(); len(rest) == 1 && rest[0] == "-" {
+	if len(rest) == 1 && rest[0] == "-" {
 		b, err := io.ReadAll(a.stdin)
 		if err != nil {
 			return err
@@ -304,7 +371,7 @@ func (a *CLI) cmdPost(ctx context.Context, args []string) (err error) {
 	if err := bsky.ValidatePostText(text); err != nil {
 		return err
 	}
-	ev := store.AuditEvent{Action: "post", DID: a.Client.DID, Handle: a.Client.Handle, DryRun: *dry, Detail: termtext.TruncateWidth(termtext.OneLine(text), 200)}
+	ev := store.AuditEvent{Action: "post", DID: a.Client.DID, Handle: a.Client.Handle, DryRun: dry, Detail: termtext.TruncateWidth(termtext.OneLine(text), 200)}
 	defer func() {
 		ev.OK = err == nil
 		if err != nil {
@@ -312,7 +379,7 @@ func (a *CLI) cmdPost(ctx context.Context, args []string) (err error) {
 		}
 		a.record(ev)
 	}()
-	if *dry {
+	if dry {
 		fmt.Fprintf(a.stdout, "[dry-run] would post (%d characters):\n%s\n", uniseg.GraphemeClusterCount(text), termtext.Sanitize(text))
 		return nil
 	}
@@ -328,23 +395,19 @@ func (a *CLI) cmdPost(ctx context.Context, args []string) (err error) {
 // cmdDeletePost deletes your own posts, each given as an at:// URI, a
 // bsky.app post link, or a bare record key.
 func (a *CLI) cmdDeletePost(ctx context.Context, args []string) error {
-	fs := NewFlagSet("delete-post")
-	dry := fs.Bool("dry-run", false, "")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
-	}
-	if fs.NArg() == 0 {
-		return fmt.Errorf("%w: delete-post needs at least one post", ErrUsage)
+	dry, rest, err := parseDryRun("delete-post", args)
+	if err != nil {
+		return err
 	}
 	var failed int
-	for _, ref := range fs.Args() {
-		if err := a.deletePost(ctx, ref, *dry); err != nil {
+	for _, ref := range rest {
+		if err := a.deletePost(ctx, ref, dry); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", termtext.Sanitize(ref), err)
 			failed++
 		}
 	}
 	if failed > 0 {
-		return fmt.Errorf("%d of %d failed", failed, fs.NArg())
+		return fmt.Errorf("%d of %d failed", failed, len(rest))
 	}
 	return nil
 }
@@ -421,23 +484,19 @@ func (a *CLI) resolvePost(ctx context.Context, ref string) (string, error) {
 
 // cmdLike likes or unlikes posts given as at:// URIs or bsky.app links.
 func (a *CLI) cmdLike(ctx context.Context, cmd string, args []string) error {
-	fs := NewFlagSet(cmd)
-	dry := fs.Bool("dry-run", false, "")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("%w: %v", ErrUsage, err)
-	}
-	if fs.NArg() == 0 {
-		return fmt.Errorf("%w: %s needs at least one post", ErrUsage, cmd)
+	dry, rest, err := parseDryRun(cmd, args)
+	if err != nil {
+		return err
 	}
 	var failed int
-	for _, ref := range fs.Args() {
-		if err := a.likePost(ctx, cmd, ref, *dry); err != nil {
+	for _, ref := range rest {
+		if err := a.likePost(ctx, cmd, ref, dry); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", termtext.Sanitize(ref), err)
 			failed++
 		}
 	}
 	if failed > 0 {
-		return fmt.Errorf("%d of %d failed", failed, fs.NArg())
+		return fmt.Errorf("%d of %d failed", failed, len(rest))
 	}
 	return nil
 }
