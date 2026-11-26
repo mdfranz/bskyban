@@ -60,8 +60,8 @@ func TestStaleReadMessagesIgnored(t *testing.T) {
 func TestQuitCancelsInFlightReads(t *testing.T) {
 	m, _ := candidates(t)
 	done := make(chan error, 1)
+	ctx := m.readContext() // taken before m is reassigned below
 	go func() {
-		ctx := m.readContext()
 		<-ctx.Done()
 		done <- ctx.Err()
 	}()
@@ -76,5 +76,44 @@ func TestQuitCancelsInFlightReads(t *testing.T) {
 	}
 	if err := <-done; err != context.Canceled {
 		t.Fatalf("readCtx.Err() = %v, want context.Canceled", err)
+	}
+}
+
+func TestAbortedQuitKeepsReadsWorking(t *testing.T) {
+	m, _ := candidates(t)
+	m.busy = true
+	next, _ := m.Update(key("q"))
+	m = next.(model)
+	if !m.quitting {
+		t.Fatal("expected quit to wait for the busy action")
+	}
+	if err := m.readContext().Err(); err != nil {
+		t.Fatalf("reads cancelled while quit is only deferred: %v", err)
+	}
+	// The action fails, so the quit is aborted and the TUI keeps running.
+	next, cmd := m.Update(actMsg{undo: undoEntry{profile: m.list[0], decision: "blocked"}, err: errors.New("boom")})
+	m = next.(model)
+	if m.quitting || cmd != nil {
+		t.Fatalf("expected quit aborted: quitting=%v cmd=%v", m.quitting, cmd != nil)
+	}
+	if err := m.readContext().Err(); err != nil {
+		t.Fatalf("TUI still running but reads are cancelled: %v", err)
+	}
+}
+
+func TestDeferredQuitCancelsReads(t *testing.T) {
+	m, _ := candidates(t)
+	ctx := m.readContext()
+	m.busy = true
+	next, _ := m.Update(key("q"))
+	m = next.(model)
+	// The action succeeds, so the deferred quit goes ahead.
+	next, cmd := m.Update(actMsg{undo: undoEntry{profile: m.list[0], decision: "kept"}})
+	m = next.(model)
+	if cmd == nil {
+		t.Fatal("expected tea.Quit after the action finished")
+	}
+	if ctx.Err() != context.Canceled {
+		t.Fatalf("reads not cancelled on deferred quit: %v", ctx.Err())
 	}
 }

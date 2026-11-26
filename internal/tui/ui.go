@@ -240,6 +240,16 @@ func (m model) readContext() context.Context {
 	return context.Background()
 }
 
+// quit cancels in-flight reads and exits. Every exit goes through here, so
+// reads are cancelled only when the TUI really stops; a quit deferred while an
+// action runs (and aborted if that action fails) leaves reads working.
+func (m model) quit() (tea.Model, tea.Cmd) {
+	if m.cancelReads != nil {
+		m.cancelReads()
+	}
+	return m, tea.Quit
+}
+
 func (m model) nextReqID() uint64 {
 	if m.reqSeq == nil {
 		return 0
@@ -511,15 +521,12 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "decision has not been saved; press r to retry saving before quitting"
 			return m, nil
 		}
-		if m.cancelReads != nil {
-			m.cancelReads()
-		}
 		if m.busy {
 			m.quitting = true
 			m.status = "finishing action before quitting…"
 			return m, nil
 		}
-		return m, tea.Quit
+		return m.quit()
 	}
 	if m.pending != nil {
 		if key == "r" {
