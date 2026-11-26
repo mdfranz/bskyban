@@ -296,6 +296,13 @@ export OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=dev  # optional
 bskyban feed
 ```
 
+If you already use `LOGFIRE_TOKEN` or `.logfire/logfire_credentials.json`, you can wrap
+any command with `./scripts/with-logfire.sh` to populate those variables automatically:
+
+```sh
+LOGFIRE_TOKEN=pylf_v1_... ./scripts/with-logfire.sh ./bskyban feed
+```
+
 - **Exported:** span names and timings (`cli <cmd>`, `xrpc <nsid>`, `tui.refresh_check`,
   `tui.timeline_page`, `tui.moderation`), HTTP method and status code, coarse outcomes
   (`ok`, `timeout`, `canceled`, `operation_failed`), counts (items, new posts), exit code,
@@ -328,7 +335,8 @@ internal/cli/       the non-TUI subcommands and the log command
 internal/termtext/  sanitizing, hyperlinks and wrapping for terminal text
 internal/telemetry/ optional, privacy-preserving OpenTelemetry trace export
 internal/testpds/   fake Bluesky server for tests
-scripts/smoke.sh    live, read-only check against your account
+scripts/smoke.sh         live, read-only check against your account
+scripts/with-logfire.sh  wrapper translating LOGFIRE_TOKEN / .logfire creds to OTEL_*
 docs/screenshots/   images used in this README
 ```
 
