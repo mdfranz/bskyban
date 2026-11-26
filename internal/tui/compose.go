@@ -24,7 +24,7 @@ func (m model) composeKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "finishing action before quitting…"
 			return m, nil
 		}
-		return m, tea.Quit
+		return m.quit()
 	}
 	if m.busy {
 		return m, nil
@@ -111,7 +111,7 @@ func (m model) applyPosted(msg postedMsg) (tea.Model, tea.Cmd) {
 	m.input.Blur()
 	m.input.SetValue("")
 	if m.quitting && m.err == nil {
-		return m, tea.Quit
+		return m.quit()
 	}
 	m.quitting = false
 	m, cmd := m.startCheck(true) // shows the new post at the top
@@ -185,7 +185,7 @@ func (m model) applyLiked(msg likedMsg) (tea.Model, tea.Cmd) {
 		m.status = "removed your like"
 	}
 	if m.quitting {
-		return m, tea.Quit
+		return m.quit()
 	}
 	return m, nil
 }
@@ -272,7 +272,7 @@ func (m model) applyDeleted(msg deletedMsg) (tea.Model, tea.Cmd) {
 	m = m.ensureVisible()
 	m.status = "deleted post"
 	if m.quitting {
-		return m, tea.Quit
+		return m.quit()
 	}
 	return m, m.prefetch()
 }

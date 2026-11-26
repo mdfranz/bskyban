@@ -193,7 +193,7 @@ func (m model) applyAct(msg actMsg) (tea.Model, tea.Cmd) {
 		m.audit(ev)
 	}
 	if m.quitting && m.err == nil {
-		return m, tea.Quit
+		return m.quit()
 	}
 	m.quitting = false
 	return m, m.prefetch()

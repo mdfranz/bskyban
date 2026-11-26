@@ -52,19 +52,20 @@ func (m model) startCheck(manual bool) (model, tea.Cmd) {
 		known[it.Key()] = true
 	}
 	m.checking = true
+	reqID := m.nextReqID()
+	m.checkID = reqID
 	if manual {
 		m.status = "checking for new posts…"
 	}
-	tl := m.timeline
+	tl, ctx := m.timeline, m.readContext()
 	return m, func() tea.Msg {
-		ctx := context.Background()
 		var fresh []bsky.FeedItem
 		got := map[string]bool{}
 		cursor := ""
 		for page := 0; page < checkPages; page++ {
 			items, next, err := tl(ctx, cursor)
 			if err != nil {
-				return newItemsMsg{err: err, manual: manual}
+				return newItemsMsg{reqID: reqID, err: err, manual: manual}
 			}
 			overlap := false
 			for _, it := range items {
@@ -77,11 +78,11 @@ func (m model) startCheck(manual bool) (model, tea.Cmd) {
 				}
 			}
 			if overlap || next == "" {
-				return newItemsMsg{items: fresh, manual: manual}
+				return newItemsMsg{reqID: reqID, items: fresh, manual: manual}
 			}
 			cursor = next
 		}
-		return newItemsMsg{items: fresh, gap: true, manual: manual}
+		return newItemsMsg{reqID: reqID, items: fresh, gap: true, manual: manual}
 	}
 }
 
@@ -159,10 +160,10 @@ func (m model) mergeCandidates(items []bsky.FeedItem) model {
 	return m
 }
 
-func loadTimeline(tl timelineFunc, cursor string) tea.Cmd {
+func loadTimeline(ctx context.Context, tl timelineFunc, cursor string, reqID uint64) tea.Cmd {
 	return func() tea.Msg {
-		items, next, err := tl(context.Background(), cursor)
-		return followingMsg{items, next, err}
+		items, next, err := tl(ctx, cursor)
+		return followingMsg{reqID: reqID, items: items, cursor: next, err: err}
 	}
 }
 
@@ -172,5 +173,6 @@ func (m model) maybeLoadMore() (model, tea.Cmd) {
 		return m, nil
 	}
 	m.moreBusy = true
-	return m, loadTimeline(m.timeline, m.tlCursor)
+	m.tlReqID = m.nextReqID()
+	return m, loadTimeline(m.readContext(), m.timeline, m.tlCursor, m.tlReqID)
 }

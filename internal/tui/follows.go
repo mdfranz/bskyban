@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -15,10 +14,12 @@ type followsBrowser struct {
 	selected int
 	loading  bool
 	loaded   bool
+	reqID    uint64
 }
 
 type followsPageMsg struct {
 	browser  *followsBrowser
+	reqID    uint64
 	accounts []bsky.Profile
 	cursor   string
 	err      error
@@ -40,15 +41,17 @@ func (m model) loadFollows() (model, tea.Cmd) {
 		return m, nil
 	}
 	b.loading = true
-	c, actor, cursor := m.a.Client, b.actor.DID, b.cursor
+	reqID := m.nextReqID()
+	b.reqID = reqID
+	c, ctx, actor, cursor := m.a.Client, m.readContext(), b.actor.DID, b.cursor
 	return m, func() tea.Msg {
-		accounts, next, err := c.GetFollowsPage(context.Background(), actor, cursor)
-		return followsPageMsg{browser: b, accounts: accounts, cursor: next, err: err}
+		accounts, next, err := c.GetFollowsPage(ctx, actor, cursor)
+		return followsPageMsg{browser: b, reqID: reqID, accounts: accounts, cursor: next, err: err}
 	}
 }
 
 func (m model) applyFollowsPage(msg followsPageMsg) (tea.Model, tea.Cmd) {
-	if m.follows != msg.browser {
+	if m.follows != msg.browser || (msg.reqID != 0 && msg.reqID != m.follows.reqID) {
 		return m, nil
 	}
 	b := m.follows
