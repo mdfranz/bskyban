@@ -170,11 +170,15 @@ func (m model) itemLines(i, w int) []string {
 
 	var lines []string
 	if i == m.cur {
-		styledWho := selStyle.Bold(true).Render(namePart) + selStyle.Foreground(theme.Heading).Render(handlePart)
+		selectedDetail := selStyle
+		if theme.SelFG == nil && theme.SelBG != nil {
+			selectedDetail = selectedDetail.Foreground(theme.Heading)
+		}
+		styledWho := selStyle.Bold(true).Render(namePart) + selectedDetail.Render(handlePart)
 		selectedTags := append([]string(nil), tagsPlain...)
 		for j, tag := range selectedTags {
 			if strings.HasPrefix(tag, "· written ") {
-				selectedTags[j] = selStyle.Foreground(theme.Heading).Italic(true).Render(tag)
+				selectedTags[j] = selectedDetail.Italic(true).Render(tag)
 			}
 		}
 		lines = append(lines, selStyle.Width(w).Render(strings.TrimRight(fmt.Sprintf("▸ %s%s %s %s", gutter, ageLink(it, age), styledWho, strings.Join(selectedTags, " ")), " ")))
