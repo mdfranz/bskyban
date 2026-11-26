@@ -12,10 +12,10 @@ follow counts, bio) next to their recent posts, then choose to block or keep.
 ## Screenshots
 
 **Following** – your home timeline, a few lines per post. Reposts are tagged with who
-reposted them; `Enter` opens a post in full. The key hints along the bottom show what each
-key does (`o` open link, `h` like, `r` reply, `n` new post).
+reposted them; `→` opens a post in full. The key hints along the bottom show what each
+key does (`Enter`/`o` open link, `h` like, `r` reply, `t` share, `n` new post).
 
-![The Following tab: timeline posts with author, age and up to three lines of text each](docs/screenshots/following-list.png)
+![The Following tab: timeline posts with author, age, repost and reply tags, quoted posts, and key hints](docs/screenshots/following-list.png)
 
 **Reposts** – the original author of a reposted post, with their profile on the left and
 the reposted post and their recent posts on the right. Block, keep or skip with one key.
@@ -313,6 +313,8 @@ LOGFIRE_TOKEN=pylf_v1_... ./scripts/with-logfire.sh ./bskyban feed
   printed to stderr before the TUI starts and `bskyban` continues without telemetry.
   Runtime export errors are silenced so an unreachable collector never draws over the TUI,
   and shutdown waits at most 3 seconds to flush pending spans on exit.
+
+![Pydantic Logfire live view showing bskyban CLI, TUI refresh, and XRPC spans with sanitized attributes](docs/screenshots/logfire-traces.png)
 
 ## Development
 
