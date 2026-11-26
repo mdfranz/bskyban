@@ -246,14 +246,16 @@ func (a *CLI) cmdBaseline(ctx context.Context) error {
 		return err
 	}
 	now := time.Now().UTC()
+	entries := make(map[string]store.Entry, len(list))
 	for _, f := range list {
-		a.State.Entries[f.DID] = store.Entry{Handle: f.Handle, Decision: store.Skipped, At: now}
+		entries[f.DID] = store.Entry{Handle: f.Handle, Decision: store.Skipped, At: now}
 	}
-	if err := a.State.Save(); err != nil {
+	count, err := a.State.PutMissing(entries)
+	if err != nil {
 		return err
 	}
-	a.record(store.AuditEvent{Action: "baseline", OK: true, Detail: fmt.Sprintf("%d followers marked as old", len(list))})
-	fmt.Fprintf(a.stdout, "baselined %d existing followers; only new ones will show by default (--backlog to revisit)\n", len(list))
+	a.record(store.AuditEvent{Action: "baseline", OK: true, Detail: fmt.Sprintf("%d followers marked as old", count)})
+	fmt.Fprintf(a.stdout, "baselined %d existing followers; only new ones will show by default (--backlog to revisit)\n", count)
 	return nil
 }
 
