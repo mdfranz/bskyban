@@ -5,6 +5,7 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -55,19 +56,53 @@ func LoadState(path string) (*State, error) {
 // Path is the file the state is saved to.
 func (s *State) Path() string { return s.path }
 
-func (s *State) Save() error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+// update serializes changes with other processes using the same state path.
+func (s *State) update(change func(map[string]Entry) bool) error {
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(s, "", "  ")
+	// Keep the lock file in place so every writer locks the same inode, even
+	// when the state file is replaced.
+	lock, err := os.OpenFile(s.path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("open state lock: %w", err)
+	}
+	defer lock.Close()
+
+	if err := lockStateFile(lock); err != nil {
+		return fmt.Errorf("lock state: %w", err)
+	}
+
+	current, err := LoadState(s.path)
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	if change(current.Entries) {
+		if err := current.write(); err != nil {
+			return err
+		}
+	}
+	s.Entries = current.Entries
+	return nil
+}
+
+func (s *State) write() error {
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	tmp, err := os.CreateTemp(filepath.Dir(s.path), "."+filepath.Base(s.path)+"-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	_, writeErr := tmp.Write(data)
+	closeErr := tmp.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), s.path)
 }
 
 func (s *State) Set(did, handle, decision string) error {
@@ -75,28 +110,35 @@ func (s *State) Set(did, handle, decision string) error {
 }
 
 func (s *State) Delete(did string) error {
-	prev, had := s.Entries[did]
-	delete(s.Entries, did)
-	if err := s.Save(); err != nil {
-		if had {
-			s.Entries[did] = prev
-		}
-		return err
-	}
-	return nil
+	return s.update(func(entries map[string]Entry) bool {
+		_, existed := entries[did]
+		delete(entries, did)
+		return existed
+	})
 }
 
 // Put stores e as the entry for did, as-is (used to restore a previous decision).
 func (s *State) Put(did string, e Entry) error {
-	prev, had := s.Entries[did]
-	s.Entries[did] = e
-	if err := s.Save(); err != nil {
-		if had {
-			s.Entries[did] = prev
-		} else {
-			delete(s.Entries, did)
+	return s.update(func(entries map[string]Entry) bool {
+		entries[did] = e
+		return true
+	})
+}
+
+// PutMissing adds decisions only for accounts without a saved decision.
+func (s *State) PutMissing(batch map[string]Entry) (int, error) {
+	count := 0
+	err := s.update(func(entries map[string]Entry) bool {
+		for did, e := range batch {
+			if _, exists := entries[did]; !exists {
+				entries[did] = e
+				count++
+			}
 		}
-		return err
+		return count > 0
+	})
+	if err != nil {
+		return 0, err
 	}
-	return nil
+	return count, nil
 }
