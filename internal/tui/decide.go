@@ -284,9 +284,12 @@ func (m model) decide(p bsky.Profile, decision string) (model, tea.Cmd) {
 		msg := actMsg{undo: e}
 		if lift { // e.g. keep/skip on a blocked account lifts the block
 			if known == "" {
-				if fp, err := c.GetProfile(ctx, p.DID); err == nil {
-					known = app.ViewerURI(fp, prev.Decision)
+				fp, err := c.GetProfile(ctx, p.DID)
+				if err != nil {
+					msg.err = err
+					return msg
 				}
+				known = app.ViewerURI(fp, prev.Decision)
 			}
 			if known != "" {
 				if msg.err = app.DeleteFor(ctx, c, prev.Decision, known); msg.err != nil {
