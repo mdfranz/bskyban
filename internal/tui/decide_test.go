@@ -82,7 +82,7 @@ func TestOverrideBlockedLookupAndUnblock(t *testing.T) {
 		}
 	})
 
-	t.Run("authoritative lookup with no existing block records override", func(t *testing.T) {
+	t.Run("authoritative lookup with no existing block records override without unblock audit", func(t *testing.T) {
 		m, f := candidates(t)
 		m.list[0] = bsky.Profile{DID: "newbie", Handle: "newbie"}
 		if err := m.a.State.Set("newbie", "newbie", store.Blocked); err != nil {
@@ -101,6 +101,42 @@ func TestOverrideBlockedLookupAndUnblock(t *testing.T) {
 		}
 		if m.idx != 1 {
 			t.Fatalf("idx = %d, want 1", m.idx)
+		}
+		evs, err := store.ReadAudit(m.a.Audit.Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(evs) != 1 || evs[0].Action != "keep" || !evs[0].OK || evs[0].Prev != store.Blocked {
+			t.Fatalf("events = %+v, want single keep event", evs)
+		}
+	})
+
+	t.Run("stale cached URI deletes record and records override", func(t *testing.T) {
+		m, f := candidates(t)
+		m.records["did:a"] = "at://did:me/app.bsky.graph.block/stale"
+		if err := m.a.State.Set("did:a", "a.bsky.social", store.Blocked); err != nil {
+			t.Fatal(err)
+		}
+
+		m = press(m, "k")
+		if m.err != nil {
+			t.Fatalf("unexpected err: %v", m.err)
+		}
+		if f.Joined() != "unblock" {
+			t.Fatalf("calls = %q, want unblock", f.Joined())
+		}
+		if keys := f.DeletedKeys(); len(keys) != 1 || keys[0] != "stale" {
+			t.Fatalf("deleted = %v, want [stale]", keys)
+		}
+		if got := m.a.State.Entries["did:a"].Decision; got != store.Kept {
+			t.Fatalf("decision = %q, want %q", got, store.Kept)
+		}
+		evs, err := store.ReadAudit(m.a.Audit.Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(evs) != 2 || evs[0].Action != "unblock" || evs[0].Detail != "lifted by kept" || evs[1].Action != "keep" {
+			t.Fatalf("events = %+v, want [unblock, keep]", evs)
 		}
 	})
 
