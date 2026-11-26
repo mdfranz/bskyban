@@ -97,6 +97,21 @@ func TestMarkersAreNotStrandedAtLineEnd(t *testing.T) {
 	}
 }
 
+func TestWrapPlain(t *testing.T) {
+	in := "visit https://example.com/path and @user.bsky.social"
+	got := WrapPlain(in, 32)
+	if len(got) < 2 {
+		t.Fatalf("expected wrapped lines, got %q", got)
+	}
+	joined := strings.Join(got, " ")
+	if strings.Contains(joined, "\x1b]8;;") {
+		t.Fatalf("WrapPlain added OSC 8 escape: %q", joined)
+	}
+	if joined != in {
+		t.Fatalf("got %q, want %q", joined, in)
+	}
+}
+
 func TestOneLine(t *testing.T) {
 	if got := OneLine("  a\n\tb   c \r\n"); got != "a b c" {
 		t.Errorf("OneLine = %q", got)

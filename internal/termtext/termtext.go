@@ -146,7 +146,13 @@ func gluePrefixes(words []string) []string {
 // Wrap word-wraps text to width columns. URLs are never shortened: one too
 // long for a line is split across lines, and every fragment is a hyperlink to
 // the full URL. Newlines in text are kept.
-func Wrap(text string, width int) []string {
+func Wrap(text string, width int) []string { return wrap(text, width, true) }
+
+// WrapPlain word-wraps text to width columns without detecting links or adding
+// OSC 8 hyperlinks, for callers that only need plain text.
+func WrapPlain(text string, width int) []string { return wrap(text, width, false) }
+
+func wrap(text string, width int, linkify bool) []string {
 	text = Sanitize(text)
 	width = max(width, 8)
 	var lines []string
@@ -160,7 +166,12 @@ func Wrap(text string, width int) []string {
 		curW := 0
 		flush := func() { lines = append(lines, cur.String()); cur.Reset(); curW = 0 }
 		for _, word := range words {
-			pieces := splitWord(word)
+			var pieces []piece
+			if linkify {
+				pieces = splitWord(word)
+			} else {
+				pieces = []piece{{text: word}}
+			}
 			wordW := 0
 			for _, p := range pieces {
 				wordW += lipgloss.Width(p.text)

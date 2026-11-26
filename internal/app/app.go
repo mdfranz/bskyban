@@ -58,13 +58,30 @@ type RepostCtx struct {
 // FeedCandidates returns the original authors of reposts in your timeline that
 // are new to you, in order of first appearance (newest first), each once.
 func (a *App) FeedCandidates(ctx context.Context, pages int, backlog bool) ([]bsky.Profile, map[string]RepostCtx, error) {
+	return a.feedCandidates(ctx, pages, backlog, nil, "", false)
+}
+
+// FeedCandidatesFrom behaves like FeedCandidates, reusing an already-fetched
+// first timeline page (and its next cursor) instead of requesting page 1 again.
+func (a *App) FeedCandidatesFrom(ctx context.Context, first []bsky.FeedItem, next string, pages int, backlog bool) ([]bsky.Profile, map[string]RepostCtx, error) {
+	return a.feedCandidates(ctx, pages, backlog, first, next, true)
+}
+
+func (a *App) feedCandidates(ctx context.Context, pages int, backlog bool, first []bsky.FeedItem, next string, haveFirst bool) ([]bsky.Profile, map[string]RepostCtx, error) {
 	var list []bsky.Profile
 	rc := map[string]RepostCtx{}
 	cursor := ""
-	for range max(pages, 1) {
-		items, next, err := a.Client.GetTimeline(ctx, cursor, 100)
-		if err != nil {
-			return nil, nil, err
+	total := max(pages, 1)
+	for i := range total {
+		var items []bsky.FeedItem
+		var err error
+		if i == 0 && haveFirst {
+			items = first
+		} else {
+			items, next, err = a.Client.GetTimeline(ctx, cursor, 100)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 		list = a.MergeRepostCandidates(list, rc, items, backlog)
 		if next == "" || len(items) == 0 {

@@ -93,3 +93,38 @@ func TestSpinnerStopsWhenNothingIsLoading(t *testing.T) {
 		t.Fatalf("spinner did not restart for a loading profile")
 	}
 }
+
+func TestPostViewCacheAndProfileTTLRefresh(t *testing.T) {
+	m, _ := followingModel(t)
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return now }
+
+	// Post view caches rendered lines per width and clears on resize.
+	_ = m.postRight(60)
+	if len(m.postClips) == 0 {
+		t.Fatal("expected postClips to be populated")
+	}
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	m = next.(model)
+	if len(m.postClips) != 0 {
+		t.Fatalf("expected postClips to clear on width change, got %d", len(m.postClips))
+	}
+
+	// Freshly cached profile/posts are not re-fetched; stale ones are.
+	did := "did:author"
+	m.profiles[did] = &bsky.Profile{DID: did, Handle: "author"}
+	posts := []bsky.Post{{Text: "hi"}}
+	m.posts[did] = &posts
+	m.profileAt[did] = now
+	m.postsAt[did] = now
+	if cmd := m.fetchProfile(did); cmd != nil {
+		t.Fatal("expected no fetch while cache is fresh")
+	}
+	now = now.Add(profileCacheTTL + time.Second)
+	if cmd := m.fetchProfile(did); cmd == nil {
+		t.Fatal("expected refresh fetch after TTL")
+	}
+	if m.profiles[did] == nil || m.posts[did] == nil {
+		t.Fatal("cached profile/posts should remain visible while refreshing")
+	}
+}
