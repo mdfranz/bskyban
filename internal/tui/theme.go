@@ -13,7 +13,7 @@ import (
 type Theme struct {
 	Name                                        string
 	Text, Dim, Warn, Error, OK, Heading, Accent lipgloss.TerminalColor
-	SelBG                                       lipgloss.TerminalColor
+	SelFG, SelBG                                lipgloss.TerminalColor
 	Fresh                                       []lipgloss.TerminalColor
 }
 
@@ -29,11 +29,11 @@ func adaptive(dark, light string) lipgloss.TerminalColor {
 	return lipgloss.AdaptiveColor{Dark: dark, Light: light}
 }
 
-func ansiTheme(name string, bg lipgloss.TerminalColor, fresh []lipgloss.TerminalColor) Theme {
+func ansiTheme(name string, fg, bg lipgloss.TerminalColor, fresh []lipgloss.TerminalColor) Theme {
 	return Theme{
 		Name: name, Text: lipgloss.NoColor{}, Dim: lipgloss.Color("8"),
 		Warn: lipgloss.Color("3"), Error: lipgloss.Color("1"), OK: lipgloss.Color("2"),
-		Heading: lipgloss.Color("6"), Accent: lipgloss.Color("5"), SelBG: bg, Fresh: fresh,
+		Heading: lipgloss.Color("6"), Accent: lipgloss.Color("5"), SelFG: fg, SelBG: bg, Fresh: fresh,
 	}
 }
 
@@ -48,10 +48,10 @@ func makeThemes() []Theme {
 		fresh[i] = adaptive(string(dark[i].(lipgloss.Color)), string(light[i].(lipgloss.Color)))
 	}
 	return []Theme{
-		ansiTheme("auto", adaptive("236", "254"), fresh),
-		ansiTheme("dark", lipgloss.Color("236"), dark),
-		ansiTheme("light", lipgloss.Color("254"), light),
-		ansiTheme("ansi", nil, colours("13", "5", "8")),
+		ansiTheme("auto", adaptive("255", "232"), adaptive("236", "254"), fresh),
+		ansiTheme("dark", lipgloss.Color("255"), lipgloss.Color("236"), dark),
+		ansiTheme("light", lipgloss.Color("232"), lipgloss.Color("254"), light),
+		ansiTheme("ansi", nil, nil, colours("13", "5", "8")),
 		// https://draculatheme.com/contribute
 		{
 			Name: "dracula", Text: lipgloss.Color("#f8f8f2"), Dim: lipgloss.Color("#6272a4"),
@@ -81,7 +81,7 @@ func (t Theme) adaptive() bool {
 		_, ok := c.(lipgloss.AdaptiveColor)
 		return ok
 	}
-	for _, c := range append([]lipgloss.TerminalColor{t.Text, t.Dim, t.Warn, t.Error, t.OK, t.Heading, t.Accent, t.SelBG}, t.Fresh...) {
+	for _, c := range append([]lipgloss.TerminalColor{t.Text, t.Dim, t.Warn, t.Error, t.OK, t.Heading, t.Accent, t.SelFG, t.SelBG}, t.Fresh...) {
 		if isAdaptive(c) {
 			return true
 		}
@@ -132,6 +132,9 @@ func applyTheme(t Theme) {
 		selStyle = selStyle.Reverse(true)
 	} else {
 		selStyle = selStyle.Background(t.SelBG)
+		if t.SelFG != nil {
+			selStyle = selStyle.Foreground(t.SelFG)
+		}
 	}
 }
 

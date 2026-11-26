@@ -75,6 +75,10 @@ export BSKY_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
 - `dracula`: the [Dracula dark palette](https://draculatheme.com/contribute).
 - `catppuccin`: [Catppuccin](https://github.com/catppuccin/catppuccin) Mocha on dark backgrounds and Latte on light ones.
 
+The `dark` and `light` themes change highlights while keeping your terminal's
+window background. The selected row uses a matching foreground and background
+so it stays readable even when automatic background detection falls back to dark.
+
 ```sh
 bskyban feed --theme light
 export BSKYBAN_THEME=catppuccin

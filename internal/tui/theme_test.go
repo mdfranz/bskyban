@@ -146,6 +146,33 @@ func TestThemeRendering(t *testing.T) {
 	}
 }
 
+func TestANSI256SelectionUsesPairedColours(t *testing.T) {
+	preserveTheme(t)
+	previous := lipgloss.DefaultRenderer()
+	t.Cleanup(func() { lipgloss.SetDefaultRenderer(previous) })
+	for _, tc := range []struct {
+		name   string
+		dark   bool
+		fg, bg string
+	}{
+		{"dark", false, "255", "236"},
+		{"light", true, "232", "254"},
+		{"auto", true, "255", "236"},
+		{"auto", false, "232", "254"},
+	} {
+		r := lipgloss.NewRenderer(io.Discard)
+		r.SetColorProfile(termenv.ANSI256)
+		r.SetHasDarkBackground(tc.dark)
+		lipgloss.SetDefaultRenderer(r)
+		th, _ := ThemeByName(tc.name)
+		applyTheme(th)
+		got := selStyle.Render("selected")
+		if !strings.Contains(got, "38;5;"+tc.fg) || !strings.Contains(got, "48;5;"+tc.bg) {
+			t.Errorf("%s (dark background: %v) rendered %q", tc.name, tc.dark, got)
+		}
+	}
+}
+
 func TestThemeFadeEndpoints(t *testing.T) {
 	preserveTheme(t)
 	now := time.Now()
