@@ -80,7 +80,7 @@ func embedLink(raw json.RawMessage) *LinkCard {
 	}
 	switch {
 	case strings.HasPrefix(e.Type, "app.bsky.embed.external") && e.External.URI != "":
-		return &LinkCard{URI: e.External.URI, Title: strings.Join(strings.Fields(e.External.Title), " ")}
+		return &LinkCard{URI: e.External.URI, Title: termtext.OneLine(e.External.Title)}
 	case e.Type == "app.bsky.embed.recordWithMedia":
 		return embedLink(e.Media)
 	}
@@ -113,7 +113,7 @@ func describeEmbed(raw json.RawMessage) []string {
 			s += fmt.Sprintf("×%d", len(e.Images))
 		}
 		for _, im := range e.Images {
-			if alt := strings.Join(strings.Fields(im.Alt), " "); alt != "" {
+			if alt := termtext.OneLine(im.Alt); alt != "" {
 				s += " " + alt
 				break
 			}
@@ -121,7 +121,7 @@ func describeEmbed(raw json.RawMessage) []string {
 		out = append(out, s)
 	case strings.HasPrefix(e.Type, "app.bsky.embed.video"):
 		s := termtext.VideoMark + " video"
-		if alt := strings.Join(strings.Fields(e.Alt), " "); alt != "" {
+		if alt := termtext.OneLine(e.Alt); alt != "" {
 			s += " " + alt
 		}
 		out = append(out, s)
@@ -144,7 +144,7 @@ func (p Post) Preview() string {
 	if p.Link != nil {
 		parts = append(parts, p.Link.Label(p.Text))
 	}
-	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+	return termtext.OneLine(strings.Join(parts, " "))
 }
 
 // title is the page title to show, unless it is missing or the post's text

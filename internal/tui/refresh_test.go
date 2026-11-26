@@ -109,17 +109,20 @@ func TestBackgroundCheckHoldsNewPostsBack(t *testing.T) {
 	}
 }
 
-func TestRKeyInsertsPostsAndKeepsYourPlace(t *testing.T) {
+func TestRKeyInsertsPostsAndJumpsToTheTop(t *testing.T) {
 	A, B, C := post("A", "a", ""), post("B", "b", ""), post("C", "c", "")
 	s := &script{pages: [][]bsky.FeedItem{{post("N2", "n2", ""), post("N1", "n1", ""), A, B, C}}}
 
 	m := refreshModel(t, s, A, B, C)
 	m.cur = 1
 	m = check(t, m, false)
+	if m.items[m.cur].URI != "B" {
+		t.Fatalf("a background check must not move you: cur=%s", m.items[m.cur].URI)
+	}
 	callsBefore := s.calls
 	m = press(m, "R")
-	if uris(m.items) != "N2,N1,A,B,C" || m.items[m.cur].URI != "B" {
-		t.Fatalf("selection moved: items=%s cur=%d (%s)", uris(m.items), m.cur, m.items[m.cur].URI)
+	if uris(m.items) != "N2,N1,A,B,C" || m.cur != 0 || m.listTop != 0 {
+		t.Fatalf("R should insert and select the newest post: items=%s cur=%d top=%d", uris(m.items), m.cur, m.listTop)
 	}
 	if s.calls != callsBefore {
 		t.Error("R with posts already waiting should not fetch again")
@@ -131,21 +134,21 @@ func TestRKeyInsertsPostsAndKeepsYourPlace(t *testing.T) {
 		t.Error("the (+N new) marker should clear")
 	}
 
-	// reading a post: it stays on screen
+	// reading a post: R closes it and goes to the top of the list
 	m = refreshModel(t, s, A, B, C)
-	m.cur, m.inPost = 2, true
+	m.cur, m.inPost, m.scroll = 2, true, 3
 	m = check(t, m, false)
 	m = press(m, "R")
-	if !m.inPost || m.items[m.cur].URI != "C" {
-		t.Errorf("post view should keep showing C: inPost=%v cur=%s", m.inPost, m.items[m.cur].URI)
+	if m.inPost || m.cur != 0 || m.scroll != 0 || m.items[0].URI != "N2" {
+		t.Errorf("R should leave the post for the top of the list: inPost=%v cur=%d scroll=%d", m.inPost, m.cur, m.scroll)
 	}
 
-	// at the very top of the list you land on the newest post
+	// nothing new: R still goes to the top
 	m = refreshModel(t, s, A, B, C)
-	m = check(t, m, false)
+	m.cur, m.listTop = 2, 1
 	m = press(m, "R")
-	if m.cur != 0 || m.items[0].URI != "N2" {
-		t.Errorf("at the top, selection should be the newest post: cur=%d first=%s", m.cur, m.items[0].URI)
+	if m.cur != 0 || m.listTop != 0 || !m.checking {
+		t.Errorf("R should go to the top and check: cur=%d top=%d checking=%v", m.cur, m.listTop, m.checking)
 	}
 }
 
@@ -276,8 +279,8 @@ func TestNewRepostAuthorsJoinTheQueue(t *testing.T) {
 	if m.ctxs["did:newguy"].Post.Text == "" {
 		t.Error("new candidate should carry the reposted post")
 	}
-	if !strings.Contains(m.tabBar(), "Reposts (2)") {
-		t.Errorf("tab count should grow: %q", m.tabBar())
+	if !strings.Contains(m.tabBar(nil), "Reposts (2)") {
+		t.Errorf("tab count should grow: %q", m.tabBar(nil))
 	}
 	if m.idx != 0 {
 		t.Error("the account under review must not move")

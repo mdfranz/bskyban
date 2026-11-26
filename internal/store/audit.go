@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mdfranz/bskyban/internal/bsky"
+	"github.com/mdfranz/bskyban/internal/termtext"
 )
 
 // stateDir is where bskyban keeps everything it writes: decisions and the audit
@@ -51,7 +52,7 @@ type Snapshot struct {
 // fetch; summaries (timeline authors) have no counts, so those are left out
 // rather than logged as a misleading 0.
 func SnapshotOf(p bsky.Profile, detailed bool) *Snapshot {
-	bio := strings.Join(strings.Fields(p.Description), " ")
+	bio := termtext.OneLine(p.Description)
 	if r := []rune(bio); len(r) > 200 {
 		bio = string(r[:200])
 	}
@@ -65,7 +66,7 @@ func SnapshotOf(p bsky.Profile, detailed bool) *Snapshot {
 // AuditEvent is one line of the audit log.
 type AuditEvent struct {
 	TS       string    `json:"ts"`
-	Action   string    `json:"action"` // block, unblock, follow, unfollow, post, delete-post, like, unlike, refresh (failures only), keep, skip, undo, baseline
+	Action   string    `json:"action"` // block, unblock, follow, unfollow, post, repost, delete-post, like, unlike, refresh (failures only), keep, skip, undo, baseline
 	DID      string    `json:"did,omitempty"`
 	Handle   string    `json:"handle,omitempty"`
 	Source   string    `json:"source"`           // cli, tui:review, tui:following, tui:reposts

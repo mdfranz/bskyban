@@ -7,6 +7,28 @@ import (
 	"github.com/mdfranz/bskyban/internal/store"
 )
 
+func TestUnfollowRequiresConfirmationAndTargetsSelectedAuthor(t *testing.T) {
+	m, f := followingModel(t)
+	m = press(m, "u")
+	if f.Joined() != "" || !strings.Contains(m.status, "Press u again") {
+		t.Fatalf("first press should only ask: calls=%s status=%q", f.Joined(), m.status)
+	}
+	m = press(m, "down")
+	m = press(m, "u")
+	if f.Joined() != "" {
+		t.Fatal("changing selection must cancel confirmation")
+	}
+	m = press(m, "up")
+	m = press(press(m, "u"), "u")
+	if f.Joined() != "unfollow" || m.items[0].Author.Viewer.Following != "" {
+		t.Fatalf("unfollow failed: calls=%s following=%q", f.Joined(), m.items[0].Author.Viewer.Following)
+	}
+	events, _ := store.ReadAudit(m.a.Audit.Path())
+	if len(events) != 1 || events[0].Action != "unfollow" || events[0].DID != "did:friend" {
+		t.Errorf("audit = %+v", events)
+	}
+}
+
 func TestFollowKeyFollowsAndUndoUnfollows(t *testing.T) {
 	m, f := candidates(t)
 	m = press(m, "f")
@@ -26,7 +48,7 @@ func TestFollowKeyFollowsAndUndoUnfollows(t *testing.T) {
 	if v := m.View(); !strings.Contains(v, "● followed") {
 		t.Error("revisited account should show the followed badge")
 	}
-	m = press(m, "u")
+	m = press(m, "U")
 	if f.Joined() != "follow,unfollow" {
 		t.Errorf("calls = %s, want follow,unfollow", f.Joined())
 	}
@@ -43,11 +65,11 @@ func TestOverridingAFollowUnfollowsFirst(t *testing.T) {
 	if f.Joined() != "follow,unfollow" || m.a.State.Entries["did:a"].Decision != store.Kept {
 		t.Fatalf("calls=%s decision=%q", f.Joined(), m.a.State.Entries["did:a"].Decision)
 	}
-	m = press(m, "u") // undoing the keep restores the follow
+	m = press(m, "U") // undoing the keep restores the follow
 	if f.Joined() != "follow,unfollow,follow" || m.a.State.Entries["did:a"].Decision != store.Followed {
 		t.Errorf("after undo: calls=%s decision=%q", f.Joined(), m.a.State.Entries["did:a"].Decision)
 	}
-	m = press(m, "u") // and undoing the original follow removes the *new* record
+	m = press(m, "U") // and undoing the original follow removes the *new* record
 	if f.Joined() != "follow,unfollow,follow,unfollow" {
 		t.Errorf("calls = %s", f.Joined())
 	}
@@ -72,7 +94,7 @@ func TestFollowingABlockedAccountLiftsTheBlock(t *testing.T) {
 	if f.Joined() != "block,unblock,follow" || m.a.State.Entries["did:a"].Decision != store.Followed {
 		t.Fatalf("calls=%s decision=%q", f.Joined(), m.a.State.Entries["did:a"].Decision)
 	}
-	m = press(m, "u") // back to blocked
+	m = press(m, "U") // back to blocked
 	if f.Joined() != "block,unblock,follow,unfollow,block" || m.a.State.Entries["did:a"].Decision != store.Blocked {
 		t.Errorf("after undo: calls=%s decision=%q", f.Joined(), m.a.State.Entries["did:a"].Decision)
 	}

@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -10,7 +11,28 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/termtext"
+	"github.com/muesli/termenv"
 )
+
+func TestAuthorHandleHasDistinctColour(t *testing.T) {
+	preserveTheme(t)
+	previous := lipgloss.DefaultRenderer()
+	t.Cleanup(func() { lipgloss.SetDefaultRenderer(previous) })
+	r := lipgloss.NewRenderer(io.Discard)
+	r.SetColorProfile(termenv.TrueColor)
+	lipgloss.SetDefaultRenderer(r)
+	th, _ := ThemeByName("dracula")
+	applyTheme(th)
+	m, _ := followingModel(t)
+	m.items = []bsky.FeedItem{{Author: bsky.Profile{DID: "did:a", Handle: "alice.bsky.social", DisplayName: "Alice"}}}
+	for _, cur := range []int{0, 1} {
+		m.cur = cur
+		line := m.itemLines(0, m.listWidth())[0]
+		if !strings.Contains(line, "\x1b[38;2;139;233;253") || !strings.Contains(termtext.StripANSI(line), "Alice (@alice.bsky.social)") {
+			t.Errorf("cur=%d: handle colour or author missing: %q", cur, line)
+		}
+	}
+}
 
 func TestRepliesInTheSameThreadAreJoined(t *testing.T) {
 	m, _ := followingModel(t)
@@ -105,7 +127,7 @@ func TestPostViewShowsEngagementAndLink(t *testing.T) {
 
 	m, f := feedWithTimeline(t)
 	m.items = []bsky.FeedItem{it}
-	m = press(m, "enter")
+	m = press(m, "right")
 	v := termtext.StripLinks(termtext.StripANSI(m.View()))
 	if !strings.Contains(v, "120 likes · 1 repost · 18 replies · 0 quotes · open post ↗") {
 		t.Errorf("stats line missing:\n%s", v)
@@ -174,7 +196,7 @@ func TestHintsArePinnedToTheBottomRow(t *testing.T) {
 			Post: bsky.Post{Text: strings.Repeat("long text ", 40)}})
 	}
 	check("full list", m)
-	check("post view", press(m, "enter"))
+	check("post view", press(m, "right"))
 
 	m.width = 50 // narrow: the hints wrap onto several rows, still at the bottom
 	check("narrow", m)

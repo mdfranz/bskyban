@@ -80,6 +80,22 @@ func (c *Client) GetFollowers(ctx context.Context, limit int) ([]Profile, error)
 	return all, nil
 }
 
+// GetFollowsPage returns one page of accounts followed by actor.
+func (c *Client) GetFollowsPage(ctx context.Context, actor, cursor string) ([]Profile, string, error) {
+	q := url.Values{"actor": {actor}, "limit": {"100"}}
+	if cursor != "" {
+		q.Set("cursor", cursor)
+	}
+	var out struct {
+		Follows []Profile `json:"follows"`
+		Cursor  string    `json:"cursor"`
+	}
+	if err := c.do(ctx, http.MethodGet, "app.bsky.graph.getFollows", q, nil, &out); err != nil {
+		return nil, "", err
+	}
+	return out.Follows, out.Cursor, nil
+}
+
 // GetProfile accepts a handle or DID.
 func (c *Client) GetProfile(ctx context.Context, actor string) (*Profile, error) {
 	var p Profile

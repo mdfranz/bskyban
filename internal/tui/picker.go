@@ -14,11 +14,7 @@ import (
 type pickLink struct {
 	label string // what the picker shows
 	url   string
-	ext   bool // leads off Bluesky (a link card or a URL in the text)
 }
-
-// maxPicks is how many links the picker numbers (keys 1-9).
-const maxPicks = 9
 
 // mentionRe finds @handle mentions in a post's text.
 var mentionRe = regexp.MustCompile(`(?i)(?:^|[^\w@])@([a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)+)`)
@@ -29,39 +25,39 @@ var mentionRe = regexp.MustCompile(`(?i)(?:^|[^\w@])@([a-z0-9][a-z0-9-]*(?:\.[a-
 func postLinks(it bsky.FeedItem) []pickLink {
 	var out []pickLink
 	seen := map[string]bool{}
-	add := func(label, url string, ext bool) {
-		if url == "" || seen[url] || len(out) >= maxPicks {
+	add := func(label, url string) {
+		if url == "" || seen[url] {
 			return
 		}
 		seen[url] = true
-		out = append(out, pickLink{label: label, url: url, ext: ext})
+		out = append(out, pickLink{label: label, url: url})
 	}
 	p := it.Post
 	if it.URI != "" {
-		add("post on bsky.app", postLink(it), false)
+		add("post on bsky.app", it.PostURL())
 	}
 	if c := p.Link; c != nil {
 		label := c.Title
 		if label == "" {
 			label = c.URI
 		}
-		add("↗ "+label, c.URI, true)
+		add("↗ "+label, c.URI)
 	}
 	for _, u := range termtext.FindURLs(p.Text) {
-		add(strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://"), u, true)
+		add(strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://"), u)
 	}
 	if p.QuoteURI != "" {
 		who := "quoted post"
 		if h, _, ok := strings.Cut(p.Quote, ":"); ok && strings.HasPrefix(h, "@") {
 			who = h + "'s quoted post"
 		}
-		add(who, bsky.PostURL(p.QuoteURI), false)
+		add(who, bsky.PostURL(p.QuoteURI))
 	}
 	for _, mm := range mentionRe.FindAllStringSubmatch(p.Text, -1) {
-		add("@"+mm[1], "https://bsky.app/profile/"+mm[1], false)
+		add("@"+mm[1], bsky.ProfileURL(mm[1]))
 	}
 	if h := it.Author.Handle; h != "" {
-		add("@"+h+"'s profile", "https://bsky.app/profile/"+h, false)
+		add("@"+h+"'s profile", bsky.ProfileURL(h))
 	}
 	return out
 }
@@ -77,56 +73,43 @@ func (m model) openKey() (model, tea.Cmd) {
 		m.status = "nothing to open"
 		return m, nil
 	}
-	m.picking, m.status, m.err = links, "", nil
+	m.picking, m.pickIndex, m.status, m.err = links, 0, "", nil
 	return m, nil
 }
 
-// pickKey handles a key while the picker is open: 1-9 opens that link, o opens
-// the post's one outside link (or the post itself), anything else closes it.
+// pickKey navigates the picker and opens the highlighted link.
 func (m model) pickKey(key string) (model, tea.Cmd) {
-	links := m.picking
-	m.picking = nil
-	n := -1
-	switch {
-	case len(key) == 1 && key[0] >= '1' && key[0] <= '9':
-		n = int(key[0] - '1')
-	case key == "o":
-		n = defaultPick(links)
+	switch key {
+	case "up", "left":
+		m.pickIndex = max(m.pickIndex-1, 0)
+	case "down", "right":
+		m.pickIndex = min(m.pickIndex+1, len(m.picking)-1)
+	case "enter", "o":
+		link := m.picking[m.pickIndex]
+		m.picking = nil
+		if err := openURL(link.url); err != nil {
+			m.err = fmt.Errorf("open link: %w", err)
+		} else {
+			m.status = "opened " + link.label
+		}
+	case "esc", "backspace":
+		m.picking = nil
 	}
-	if n < 0 || n >= len(links) {
-		return m, nil // closed without opening anything
-	}
-	if err := openURL(links[n].url); err != nil {
-		m.err = fmt.Errorf("open link: %w", err)
-		return m, nil
-	}
-	m.status = "opened " + links[n].label
 	return m, nil
 }
 
-// defaultPick is what o o opens: the only link leading off Bluesky, if there is
-// exactly one, otherwise the first entry (the post on bsky.app).
-func defaultPick(links []pickLink) int {
-	ext := -1
-	for i, l := range links {
-		if l.ext {
-			if ext >= 0 {
-				return 0
-			}
-			ext = i
+// pickerLines shows a scrolling window of links, with the current one highlighted.
+func (m model) pickerLines() []string {
+	limit := min(len(m.picking), max(1, min(5, m.height-4)))
+	start := max(0, m.pickIndex-limit+1)
+	lines := []string{warnStyle.Render("open:")}
+	for i := start; i < start+limit; i++ {
+		label := termtext.TruncateWidth(termtext.Sanitize(m.picking[i].label), max(m.width-2, 1))
+		if i == m.pickIndex {
+			lines = append(lines, selStyle.Render("▸ "+label))
+		} else {
+			lines = append(lines, "  "+label)
 		}
 	}
-	if ext >= 0 {
-		return ext
-	}
-	return 0
-}
-
-// pickerLines is the numbered list the footer shows while picking, wrapped to w.
-func (m model) pickerLines() []string {
-	items := make([]string, len(m.picking))
-	for i, l := range m.picking {
-		items[i] = fmt.Sprintf("%d %s", i+1, termtext.TruncateWidth(termtext.Sanitize(l.label), 40))
-	}
-	return wrapItems(append([]string{"open:"}, items...), m.width)
+	return lines
 }

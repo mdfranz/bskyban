@@ -245,6 +245,17 @@ func TruncateWidth(s string, w int) string {
 	return b.String() + "…"
 }
 
+// OneLine collapses every run of whitespace, newlines included, into one space.
+func OneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// HumanAgeISO is the age of an RFC 3339 timestamp as HumanAge shows it ("?" when it does not parse).
+func HumanAgeISO(rfc3339 string) string {
+	if t, err := time.Parse(time.RFC3339, rfc3339); err == nil {
+		return HumanAge(time.Since(t))
+	}
+	return "?"
+}
+
 // HumanAge is a duration as one short unit: 5m, 3h, 12d or 7mo ("?" when unknown).
 func HumanAge(d time.Duration) string {
 	switch {

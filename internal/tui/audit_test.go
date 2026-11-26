@@ -17,7 +17,7 @@ func TestTUIActionsAreAudited(t *testing.T) {
 	m = press(m, "b") // block a
 	m = press(m, "left")
 	m = press(m, "k") // override: lifts the block
-	m = press(m, "u") // undo: block comes back
+	m = press(m, "U") // undo: block comes back
 	want := []string{"block", "unblock", "keep", "undo"}
 	got := testpds.Actions(t, m.a)
 	if strings.Join(got, ",") != strings.Join(want, ",") {
