@@ -18,15 +18,20 @@ This document lists and classifies the 3rd party dependencies used in the `bskyb
 
 *   **[github.com/rivo/uniseg](https://github.com/rivo/uniseg)**: Unicode text segmentation. `internal/tui` uses `uniseg.GraphemeClusterCount` to enforce Bluesky's 300-grapheme post limit and show the counter in the composer, and `internal/cli` applies the same limit to `bskyban post`.
 
+## Observability (Optional)
+
+*   **[go.opentelemetry.io/otel](https://pkg.go.dev/go.opentelemetry.io/otel)** (`otel`, `sdk`, `exporters/otlp/otlptrace/otlptracehttp`): optional, privacy-preserving OTLP/HTTP trace export in `internal/telemetry` (enabled only when both `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` are set). When unset, `otel.Tracer` is a zero-cost no-op.
+
 ## Indirect dependencies
 
 Pulled in underneath the packages above; this repo does not import them.
 
 *   **[github.com/charmbracelet/colorprofile](https://github.com/charmbracelet/colorprofile)**, **[github.com/lucasb-eyer/go-colorful](https://github.com/lucasb-eyer/go-colorful)**: colour depth detection and colour maths for the themes.
-*   **[github.com/mattn/go-runewidth](https://github.com/mattn/go-runewidth)**, **[github.com/clipperhouse/displaywidth](https://github.com/clipperhouse/displaywidth)** (with `stringish` and `uax29`): display-width calculation for wide characters and emoji.
+*   **[github.com/mattn/go-runewidth](https://github.com/mattn/go-runewidth)**, **[github.com/clipperhouse/displaywidth](https://github.com/clipperhouse/displaywidth)** (with `uax29`): display-width calculation for wide characters and emoji.
 *   **[github.com/muesli/ansi](https://github.com/muesli/ansi)**, **[github.com/charmbracelet/x/cellbuf](https://github.com/charmbracelet/x)**, **[github.com/xo/terminfo](https://github.com/xo/terminfo)**: ANSI-aware string handling and the terminal cell buffer used by the renderer.
 *   **[github.com/muesli/cancelreader](https://github.com/muesli/cancelreader)**, **[github.com/mattn/go-localereader](https://github.com/mattn/go-localereader)**, **[github.com/erikgeiser/coninput](https://github.com/erikgeiser/coninput)**, **[github.com/mattn/go-isatty](https://github.com/mattn/go-isatty)**: cancellable terminal input and TTY detection.
 *   **[github.com/atotto/clipboard](https://github.com/atotto/clipboard)**, **[github.com/aymanbagabas/go-osc52](https://github.com/aymanbagabas/go-osc52)**: clipboard support used by the `textinput` component.
+*   **[go.opentelemetry.io/proto/otlp](https://pkg.go.dev/go.opentelemetry.io/proto/otlp)**, **[google.golang.org/grpc](https://pkg.go.dev/google.golang.org/grpc)**, **[google.golang.org/protobuf](https://pkg.go.dev/google.golang.org/protobuf)**, **[golang.org/x/net](https://pkg.go.dev/golang.org/x/net)**, **[github.com/cenkalti/backoff/v5](https://github.com/cenkalti/backoff)**, **[github.com/go-logr/logr](https://github.com/go-logr/logr)**, **[github.com/google/uuid](https://github.com/google/uuid)**: transitive dependencies pulled in by `otlptracehttp` and the OTel SDK.
 *   **[golang.org/x/sys](https://pkg.go.dev/golang.org/x/sys)**, **[golang.org/x/text](https://pkg.go.dev/golang.org/x/text)**: OS primitives and text tables for the packages above.
 
 ## Not dependencies

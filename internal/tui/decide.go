@@ -14,6 +14,10 @@ import (
 	"github.com/mdfranz/bskyban/internal/app"
 	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/store"
+	"github.com/mdfranz/bskyban/internal/telemetry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type undoEntry struct {
@@ -222,9 +226,21 @@ func (m model) unfollowKey(confirm string) (model, tea.Cmd) {
 	c := m.a.Client
 	m.busy, m.err, m.status = true, nil, ""
 	return m, func() tea.Msg {
-		msg := actMsg{undo: e, isUnfollow: true}
+		ctx, span := telemetry.Tracer().Start(context.Background(), "tui.moderation",
+			trace.WithAttributes(attribute.String("bskyban.action", "unfollow")),
+		)
+		var msg actMsg
+		defer func() {
+			outcome := telemetry.ClassifyOutcome(msg.err)
+			span.SetAttributes(attribute.String("bskyban.outcome", outcome))
+			if msg.err != nil {
+				span.SetStatus(codes.Error, outcome)
+			}
+			span.End()
+		}()
+		msg = actMsg{undo: e, isUnfollow: true}
 		if msg.undo.record == "" {
-			profile, err := c.GetProfile(context.Background(), p.DID)
+			profile, err := c.GetProfile(ctx, p.DID)
 			if err != nil {
 				msg.err = err
 				return msg
@@ -235,7 +251,7 @@ func (m model) unfollowKey(confirm string) (model, tea.Cmd) {
 			msg.err = fmt.Errorf("you do not follow @%s", p.Handle)
 			return msg
 		}
-		msg.err = c.Unfollow(context.Background(), msg.undo.record)
+		msg.err = c.Unfollow(ctx, msg.undo.record)
 		return msg
 	}
 }
@@ -280,8 +296,19 @@ func (m model) decide(p bsky.Profile, decision string) (model, tea.Cmd) {
 	c := m.a.Client
 	m.busy, m.err = true, nil
 	return m, func() tea.Msg {
-		ctx := context.Background()
-		msg := actMsg{undo: e}
+		ctx, span := telemetry.Tracer().Start(context.Background(), "tui.moderation",
+			trace.WithAttributes(attribute.String("bskyban.action", decisionAction[decision])),
+		)
+		var msg actMsg
+		defer func() {
+			outcome := telemetry.ClassifyOutcome(msg.err)
+			span.SetAttributes(attribute.String("bskyban.outcome", outcome))
+			if msg.err != nil {
+				span.SetStatus(codes.Error, outcome)
+			}
+			span.End()
+		}()
+		msg = actMsg{undo: e}
 		if lift { // e.g. keep/skip on a blocked account lifts the block
 			if known == "" {
 				fp, err := c.GetProfile(ctx, p.DID)
@@ -323,8 +350,19 @@ func (m model) undo() (model, tea.Cmd) {
 	c := m.a.Client
 	m.busy, m.err = true, nil
 	return m, func() tea.Msg {
-		ctx := context.Background()
-		msg := actMsg{undo: e, isUndo: true}
+		ctx, span := telemetry.Tracer().Start(context.Background(), "tui.moderation",
+			trace.WithAttributes(attribute.String("bskyban.action", "undo")),
+		)
+		var msg actMsg
+		defer func() {
+			outcome := telemetry.ClassifyOutcome(msg.err)
+			span.SetAttributes(attribute.String("bskyban.outcome", outcome))
+			if msg.err != nil {
+				span.SetStatus(codes.Error, outcome)
+			}
+			span.End()
+		}()
+		msg = actMsg{undo: e, isUndo: true}
 		if app.IsRemote(e.decision) && e.record != "" {
 			msg.err = app.DeleteFor(ctx, c, e.decision, e.record)
 		}

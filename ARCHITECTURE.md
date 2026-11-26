@@ -4,7 +4,7 @@ This document describes the components and data flow of bskyban. For usage, keys
 
 ## High-Level Overview
 
-bskyban is a single Go binary. `cmd/bskyban` is the entry point and everything else lives under `internal/`. It is a client for the Bluesky AT Protocol that offers two front ends over the same code: an interactive terminal UI (Bubble Tea) and scriptable subcommands. It talks only to the user's PDS over HTTPS and keeps two small local files.
+bskyban is a single Go binary. `cmd/bskyban` is the entry point and everything else lives under `internal/`. It is a client for the Bluesky AT Protocol that offers two front ends over the same code: an interactive terminal UI (Bubble Tea) and scriptable subcommands. It talks to the user's PDS over HTTPS, keeps two small local files, and optionally exports OpenTelemetry traces over OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` are both set.
 
 ```mermaid
 graph TD
@@ -24,6 +24,7 @@ graph TD
 
     subgraph "Remote"
         PDS[(Bluesky PDS\nXRPC over HTTPS)]
+        OTLP[(Optional OTLP/HTTP\nLogfire traces)]
     end
 
     TUI --> App
@@ -31,23 +32,26 @@ graph TD
     App --> |Client: net/http| PDS
     App --> State
     App --> Audit
+    TUI -.-> |internal/telemetry| OTLP
+    App -.-> |internal/telemetry| OTLP
 ```
 
 The code is split by concern into packages that depend only downward:
 
 ```
-cmd/bskyban  ->  internal/tui, internal/cli  ->  internal/app  ->  internal/store  ->  internal/bsky  ->  internal/termtext
+cmd/bskyban  ->  internal/tui, internal/cli  ->  internal/app  ->  internal/store  ->  internal/bsky  ->  internal/termtext, internal/telemetry
 ```
 
 | Package | Responsibility |
 |---------|----------------|
-| `cmd/bskyban` | Entry point (`main.go`): picks the subcommand, parses flags before login, loads state, logs in, builds `app.App`, starts the right front end |
+| `cmd/bskyban` | Entry point (`main.go`): initializes optional telemetry, picks the subcommand, parses flags before login, loads state, logs in, builds `app.App`, starts the right front end |
 | `internal/bsky` | `Client` (XRPC), the types it returns (`Profile`, `Post`, `FeedItem`, `Repost`, ...) in `profile.go`, `post.go`, `feed.go`, and record writes in `records.go` |
 | `internal/store` | `State` (decisions per DID in `state.json`) and `Audit` (append-only `audit.jsonl`, `AuditEvent`, `Snapshot`), plus the default file locations |
 | `internal/app` | `App` (client + state + audit): which followers and repost authors are new (`Followers`, `IsNew`, `FeedCandidates`) and how a decision maps to a block/follow record (`CreateFor`, `DeleteFor`, `IsRemote`, `ViewerURI`) |
 | `internal/tui` | The Bubble Tea `model` for all three TUIs: model, `Update`, `View` and key dispatch (`ui.go`); account decisions, unfollow and undo (`decide.go`); composing, replying, liking and deleting (`compose.go`); background refresh, the pending queue and `--fancy` (`refresh.go`); the profile and posts panels (`panels.go`); the timeline list (`list.go`); the `F` followed-accounts browser (`follows.go`); the link picker (`picker.go`); browser launch (`images.go`); colour themes (`theme.go`); and the `RunFeed`/`RunPosts`/`RunReview` entry points (`tui.go`) |
 | `internal/cli` | Every non-TUI subcommand (`cli.go`), including `act` (block/keep/follow/unblock/unfollow with `--dry-run`), the `log` subcommand (`logcmd.go`), usage text and plain-text formatting |
 | `internal/termtext` | Making untrusted text safe for a terminal: sanitizing, URL detection, OSC 8 hyperlinks, link-preserving wrapping, width truncation |
+| `internal/telemetry` | Optional OTLP/HTTP trace export (`Init`, `Shutdown`, `Tracer`, `ClassifyOutcome`), enabled only when `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` are set |
 | `internal/testpds` | A fake Bluesky server and test helpers shared by the TUI and CLI tests |
 
 ## Components

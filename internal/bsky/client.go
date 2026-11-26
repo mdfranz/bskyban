@@ -11,7 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mdfranz/bskyban/internal/telemetry"
 	"github.com/mdfranz/bskyban/internal/termtext"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Client struct {
@@ -26,7 +30,22 @@ func NewClient(base string) *Client {
 	return &Client{base: strings.TrimRight(base, "/"), http: &http.Client{Timeout: 30 * time.Second}}
 }
 
-func (c *Client) do(ctx context.Context, method, nsid string, query url.Values, body, out any) error {
+func (c *Client) do(ctx context.Context, method, nsid string, query url.Values, body, out any) (retErr error) {
+	ctx, span := telemetry.Tracer().Start(ctx, "xrpc "+nsid,
+		trace.WithAttributes(
+			attribute.String("xrpc.nsid", nsid),
+			attribute.String("http.request.method", method),
+		),
+	)
+	defer func() {
+		outcome := telemetry.ClassifyOutcome(retErr)
+		span.SetAttributes(attribute.String("xrpc.outcome", outcome))
+		if retErr != nil {
+			span.SetStatus(codes.Error, outcome)
+		}
+		span.End()
+	}()
+
 	u := c.base + "/xrpc/" + nsid
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -54,6 +73,7 @@ func (c *Client) do(ctx context.Context, method, nsid string, query url.Values, 
 		return err
 	}
 	defer resp.Body.Close()
+	span.SetAttributes(attribute.Int("http.response.status_code", resp.StatusCode))
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err

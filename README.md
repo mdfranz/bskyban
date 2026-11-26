@@ -12,10 +12,10 @@ follow counts, bio) next to their recent posts, then choose to block or keep.
 ## Screenshots
 
 **Following** – your home timeline, a few lines per post. Reposts are tagged with who
-reposted them; `Enter` opens a post in full. The key hints along the bottom show what each
-key does (`o` open link, `h` like, `r` reply, `n` new post).
+reposted them; `→` opens a post in full. The key hints along the bottom show what each
+key does (`Enter`/`o` open link, `h` like, `r` reply, `t` share, `n` new post).
 
-![The Following tab: timeline posts with author, age and up to three lines of text each](docs/screenshots/following-list.png)
+![The Following tab: timeline posts with author, age, repost and reply tags, quoted posts, and key hints](docs/screenshots/following-list.png)
 
 **Reposts** – the original author of a reposted post, with their profile on the left and
 the reposted post and their recent posts on the right. Block, keep or skip with one key.
@@ -281,6 +281,41 @@ for them (that file is `state.json` in the state directory). `block` and `keep` 
 "skipped". There is no follow timestamp in the Bluesky API, so this is
 tracked locally.
 
+## Observability (OpenTelemetry / Logfire)
+
+`bskyban` can optionally export OpenTelemetry traces over OTLP/HTTP (for example to
+[Pydantic Logfire](https://logfire.pydantic.dev)). Export is **off by default** and
+only turns on when **both** `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS`
+are set and non-empty; otherwise no exporter is created and no network connections are made.
+
+```sh
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://logfire-us.pydantic.dev
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=<your-logfire-write-token>"
+export OTEL_SERVICE_NAME=bskyban                         # optional, default: bskyban
+export OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=dev  # optional
+bskyban feed
+```
+
+If you already use `LOGFIRE_TOKEN` or `.logfire/logfire_credentials.json`, you can wrap
+any command with `./scripts/with-logfire.sh` to populate those variables automatically:
+
+```sh
+LOGFIRE_TOKEN=pylf_v1_... ./scripts/with-logfire.sh ./bskyban feed
+```
+
+- **Exported:** span names and timings (`cli <cmd>`, `xrpc <nsid>`, `tui.refresh_check`,
+  `tui.timeline_page`, `tui.moderation`), HTTP method and status code, coarse outcomes
+  (`ok`, `timeout`, `canceled`, `operation_failed`), counts (items, new posts), exit code,
+  and build metadata (`service.name`, `service.version`, `vcs.revision`).
+- **Never exported:** app passwords, access tokens, handles, DIDs, post text, URLs,
+  request bodies, server-supplied XRPC error codes, or raw error messages.
+- **Non-blocking & TUI-safe:** if exporter setup fails at startup, a single warning is
+  printed to stderr before the TUI starts and `bskyban` continues without telemetry.
+  Runtime export errors are silenced so an unreachable collector never draws over the TUI,
+  and shutdown waits at most 3 seconds to flush pending spans on exit.
+
+![Pydantic Logfire live view showing bskyban CLI, TUI refresh, and XRPC spans with sanitized attributes](docs/screenshots/logfire-traces.png)
+
 ## Development
 
 ```sh
@@ -300,8 +335,10 @@ internal/app/       logic shared by the TUI and the subcommands
 internal/tui/       Bubble Tea terminal UI, link picker, themes
 internal/cli/       the non-TUI subcommands and the log command
 internal/termtext/  sanitizing, hyperlinks and wrapping for terminal text
+internal/telemetry/ optional, privacy-preserving OpenTelemetry trace export
 internal/testpds/   fake Bluesky server for tests
-scripts/smoke.sh    live, read-only check against your account
+scripts/smoke.sh         live, read-only check against your account
+scripts/with-logfire.sh  wrapper translating LOGFIRE_TOKEN / .logfire creds to OTEL_*
 docs/screenshots/   images used in this README
 ```
 
