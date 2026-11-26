@@ -145,8 +145,11 @@ type model struct {
 	spin          spinner.Model
 	spinOn        bool                // a spinner tick is scheduled
 	clips         map[clipKey]clipped // wrapped list text, by item and width
+	postClips     map[postClipKey][]string
 	profiles      map[string]*bsky.Profile
 	posts         map[string]*[]bsky.Post // nil value = in flight
+	profileAt     map[string]time.Time
+	postsAt       map[string]time.Time
 	profileReqIDs map[string]uint64
 	postsReqIDs   map[string]uint64
 	checkID       uint64
@@ -181,9 +184,12 @@ func newModel(a *app.App, title string, load loadFunc) model {
 	return model{
 		a: a, title: title, candLabel: label, loader: load, loading: true, spin: sp, spinOn: true, // Init ticks
 		clips:         map[clipKey]clipped{},
+		postClips:     map[postClipKey][]string{},
 		tabs:          []tabID{tabCandidates},
 		profiles:      map[string]*bsky.Profile{},
 		posts:         map[string]*[]bsky.Post{},
+		profileAt:     map[string]time.Time{},
+		postsAt:       map[string]time.Time{},
 		profileReqIDs: map[string]uint64{},
 		postsReqIDs:   map[string]uint64{},
 		reqSeq:        new(uint64),
@@ -270,11 +276,20 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
+const profileCacheTTL = 5 * time.Minute
+
 func (m model) fetchProfile(did string) tea.Cmd {
 	var cmds []tea.Cmd
-	c, ctx := m.a.Client, m.readContext()
-	if _, ok := m.profiles[did]; !ok {
-		m.profiles[did] = nil // mark in flight
+	c, ctx, now := m.a.Client, m.readContext(), m.now()
+	p, haveP := m.profiles[did]
+	atP, haveAtP := m.profileAt[did]
+	if !haveP || (p != nil && haveAtP && now.Sub(atP) >= profileCacheTTL) {
+		if !haveP {
+			m.profiles[did] = nil // mark in flight
+		}
+		if m.profileAt != nil {
+			m.profileAt[did] = now // avoid duplicate background refreshes while in flight
+		}
 		id := m.nextReqID()
 		if m.profileReqIDs != nil {
 			m.profileReqIDs[did] = id
@@ -284,8 +299,15 @@ func (m model) fetchProfile(did string) tea.Cmd {
 			return profileMsg{p: p, did: did, err: err, reqID: id}
 		})
 	}
-	if _, ok := m.posts[did]; !ok {
-		m.posts[did] = nil // mark in flight
+	pp, havePosts := m.posts[did]
+	atPosts, haveAtPosts := m.postsAt[did]
+	if !havePosts || (pp != nil && haveAtPosts && now.Sub(atPosts) >= profileCacheTTL) {
+		if !havePosts {
+			m.posts[did] = nil // mark in flight
+		}
+		if m.postsAt != nil {
+			m.postsAt[did] = now
+		}
 		id := m.nextReqID()
 		if m.postsReqIDs != nil {
 			m.postsReqIDs[did] = id
@@ -384,7 +406,8 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		if msg.Width != m.width {
-			clear(m.clips) // wrapped for the old width
+			clear(m.clips)     // wrapped for the old width
+			clear(m.postClips) // wrapped for the old width
 		}
 		m.width, m.height = msg.Width, msg.Height
 		m = m.ensureVisible()
@@ -467,20 +490,30 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err != nil {
-			delete(m.profiles, msg.did)
+			if m.profiles[msg.did] == nil {
+				delete(m.profiles, msg.did)
+			}
 			m.err = msg.err
 		} else {
 			m.profiles[msg.did] = msg.p
+			if m.profileAt != nil {
+				m.profileAt[msg.did] = m.now()
+			}
 		}
 	case postsMsg:
 		if msg.reqID != 0 && m.postsReqIDs[msg.did] != msg.reqID {
 			return m, nil
 		}
 		if msg.err != nil {
-			delete(m.posts, msg.did)
+			if m.posts[msg.did] == nil {
+				delete(m.posts, msg.did)
+			}
 			m.err = msg.err
 		} else {
 			m.posts[msg.did] = &msg.posts
+			if m.postsAt != nil {
+				m.postsAt[msg.did] = m.now()
+			}
 		}
 	case actMsg:
 		return m.applyAct(msg)

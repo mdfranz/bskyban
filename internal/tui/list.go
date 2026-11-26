@@ -40,12 +40,12 @@ const previewLines = 3
 const quoteLines = 2
 
 // clip hard-wraps text to w columns, keeping at most n lines (the last ends in "…"
-// when something was cut). Links are not needed in the list, so OSC 8 is removed.
+// when something was cut). Links are not needed in the list, so WrapPlain skips linkify.
 func clip(text string, w, n int) []string {
 	if text == "" {
 		return nil
 	}
-	lines := strings.Split(termtext.StripLinks(strings.Join(termtext.Wrap(text, w), "\n")), "\n")
+	lines := termtext.WrapPlain(text, w)
 	if len(lines) > n {
 		lines = lines[:n]
 		lines[n-1] = termtext.TruncateWidth(lines[n-1]+" …", w)

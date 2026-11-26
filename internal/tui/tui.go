@@ -4,6 +4,8 @@ package tui
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mdfranz/bskyban/internal/app"
@@ -22,11 +24,31 @@ type Options struct {
 // pages is how many timeline pages (100 items each) to scan for reposts.
 func RunFeed(a *app.App, pages int, o Options) error {
 	applyTheme(o.Theme)
+	var (
+		firstOnce sync.Once
+		tlUsed    atomic.Bool
+		first     []bsky.FeedItem
+		firstNext string
+		firstErr  error
+	)
+	getFirst := func(ctx context.Context) ([]bsky.FeedItem, string, error) {
+		firstOnce.Do(func() {
+			first, firstNext, firstErr = a.Client.GetTimeline(ctx, "", 100)
+		})
+		return first, firstNext, firstErr
+	}
 	fm := newFeedModel(a,
 		func(ctx context.Context) ([]bsky.Profile, map[string]app.RepostCtx, error) {
-			return a.FeedCandidates(ctx, pages, o.Backlog)
+			items, next, err := getFirst(ctx)
+			if err != nil {
+				return nil, nil, err
+			}
+			return a.FeedCandidatesFrom(ctx, items, next, pages, o.Backlog)
 		},
 		func(ctx context.Context, cursor string) ([]bsky.FeedItem, string, error) {
+			if cursor == "" && !tlUsed.Swap(true) {
+				return getFirst(ctx)
+			}
 			return a.Client.GetTimeline(ctx, cursor, 50)
 		})
 	fm.refresh, fm.backlog, fm.fancy = o.Refresh, o.Backlog, o.Fancy

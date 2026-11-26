@@ -147,12 +147,32 @@ func (m model) profilePanel(cw int, pos string) []string {
 	return append(lines, dimStyle.Render("(no bio)"))
 }
 
+type postClipKey struct {
+	createdAt string
+	text      string
+	quote     string
+	cw        int
+	full      bool
+}
+
+func (m model) renderPostCached(p bsky.Post, cw int, full bool) []string {
+	k := postClipKey{p.CreatedAt, p.Text, p.Quote, cw, full}
+	if lines, ok := m.postClips[k]; ok {
+		return lines
+	}
+	lines := renderPost(p, cw, full)
+	if m.postClips != nil && (p.CreatedAt != "" || p.Text != "") {
+		m.postClips[k] = lines
+	}
+	return lines
+}
+
 // currentPost marks the post you are on: a heading and an accent bar down its side,
 // so it stands apart from the author's other posts listed below it.
-func currentPost(title string, p bsky.Post, it bsky.FeedItem, cw int) []string {
+func (m model) currentPost(title string, p bsky.Post, it bsky.FeedItem, cw int) []string {
 	lines := []string{headingStyle.Render("▸ " + title)}
 	bar := accentStyle.Render("┃ ")
-	for _, l := range renderPost(p, max(cw-2, 10), true) {
+	for _, l := range m.renderPostCached(p, max(cw-2, 10), true) {
 		if l == "" {
 			continue
 		}
@@ -197,7 +217,7 @@ func (m model) recentLines(did string, cw int, cur bsky.Post) []string {
 			if post.CreatedAt == cur.CreatedAt && post.Text == cur.Text {
 				continue
 			}
-			lines = append(lines, renderPost(post, cw, false)...)
+			lines = append(lines, m.renderPostCached(post, cw, false)...)
 		}
 	}
 	return lines
@@ -211,7 +231,7 @@ func (m model) candRight(cw int) []string {
 	var lines []string
 	if rc, ok := m.ctxs[p.DID]; ok {
 		lines = append(lines, accentStyle.Render("Reposted by @"+strings.Join(rc.By, ", @")), "")
-		lines = append(lines, currentPost("Reposted post", rc.Post, rc.Item, cw)...)
+		lines = append(lines, m.currentPost("Reposted post", rc.Post, rc.Item, cw)...)
 	}
 	return append(lines, m.recentLines(p.DID, cw, rc0(m.ctxs, p.DID))...)
 }
@@ -226,7 +246,7 @@ func (m model) postRight(cw int) []string {
 		}
 		lines = append(lines, accentStyle.Render(by), "")
 	}
-	lines = append(lines, currentPost(fmt.Sprintf("This post · %d of %d", m.cur+1, len(m.items)), it.Post, it, cw)...)
+	lines = append(lines, m.currentPost(fmt.Sprintf("This post · %d of %d", m.cur+1, len(m.items)), it.Post, it, cw)...)
 	return append(lines, m.recentLines(it.Author.DID, cw, it.Post)...)
 }
 
