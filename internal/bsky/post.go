@@ -46,18 +46,37 @@ func expandLinks(text string, facets []Facet) string {
 	}
 	var reps []rep
 	for _, f := range facets {
+		if f.Index.ByteStart < 0 || f.Index.ByteStart >= f.Index.ByteEnd || f.Index.ByteEnd > len(text) {
+			continue
+		}
 		for _, ft := range f.Features {
-			if strings.HasSuffix(ft.Type, "#link") && ft.URI != "" &&
-				f.Index.ByteStart >= 0 && f.Index.ByteStart < f.Index.ByteEnd && f.Index.ByteEnd <= len(text) {
+			if strings.HasSuffix(ft.Type, "#link") && ft.URI != "" {
 				reps = append(reps, rep{f.Index.ByteStart, f.Index.ByteEnd, ft.URI})
+				break
 			}
 		}
 	}
-	sort.Slice(reps, func(i, j int) bool { return reps[i].start > reps[j].start })
-	for _, r := range reps { // back to front so earlier offsets stay valid
-		text = text[:r.start] + r.uri + text[r.end:]
+	if len(reps) == 0 {
+		return text
 	}
-	return text
+	sort.SliceStable(reps, func(i, j int) bool {
+		if reps[i].start != reps[j].start {
+			return reps[i].start < reps[j].start
+		}
+		return reps[i].end < reps[j].end
+	})
+	var b strings.Builder
+	pos := 0
+	for _, r := range reps {
+		if r.start < pos {
+			continue // overlapping replacement
+		}
+		b.WriteString(text[pos:r.start])
+		b.WriteString(r.uri)
+		pos = r.end
+	}
+	b.WriteString(text[pos:])
+	return b.String()
 }
 
 // LinkCard is a post's link preview: where it goes and the page title.

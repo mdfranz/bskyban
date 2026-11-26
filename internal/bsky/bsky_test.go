@@ -22,17 +22,66 @@ func TestLinkFacets(t *testing.T) {
 }
 
 func TestExpandLinks(t *testing.T) {
-	text := "See www.news.com/ted-cruz-say... now"
-	f := Facet{}
-	f.Index.ByteStart, f.Index.ByteEnd = 4, 32
-	f.Features = []struct {
-		Type string `json:"$type"`
-		URI  string `json:"uri"`
-	}{{Type: "app.bsky.richtext.facet#link", URI: "https://www.news.com/ted-cruz-says-all"}}
-	got := expandLinks(text, []Facet{f})
-	if got != "See https://www.news.com/ted-cruz-says-all now" {
-		t.Errorf("got %q", got)
+	makeFacet := func(start, end int, uris ...string) Facet {
+		var f Facet
+		f.Index.ByteStart, f.Index.ByteEnd = start, end
+		for _, u := range uris {
+			f.Features = append(f.Features, struct {
+				Type string `json:"$type"`
+				URI  string `json:"uri"`
+			}{Type: "app.bsky.richtext.facet#link", URI: u})
+		}
+		return f
 	}
+
+	t.Run("basic", func(t *testing.T) {
+		text := "See www.news.com/ted-cruz-say... now"
+		got := expandLinks(text, []Facet{makeFacet(4, 32, "https://www.news.com/ted-cruz-says-all")})
+		if got != "See https://www.news.com/ted-cruz-says-all now" {
+			t.Errorf("got %q", got)
+		}
+	})
+
+	t.Run("overlapping ranges", func(t *testing.T) {
+		got := expandLinks("0123456789", []Facet{
+			makeFacet(0, 10, "x"),
+			makeFacet(5, 10, "y"),
+		})
+		if got != "x" {
+			t.Errorf("got %q, want %q", got, "x")
+		}
+	})
+
+	t.Run("duplicate link features", func(t *testing.T) {
+		got := expandLinks("see link here", []Facet{
+			makeFacet(4, 8, "https://first.example", "https://second.example"),
+		})
+		if got != "see https://first.example here" {
+			t.Errorf("got %q", got)
+		}
+	})
+
+	t.Run("invalid offsets", func(t *testing.T) {
+		got := expandLinks("hello", []Facet{
+			makeFacet(-1, 3, "https://a.example"),
+			makeFacet(3, 3, "https://b.example"),
+			makeFacet(4, 2, "https://c.example"),
+			makeFacet(0, 99, "https://d.example"),
+		})
+		if got != "hello" {
+			t.Errorf("got %q, want %q", got, "hello")
+		}
+	})
+
+	t.Run("multibyte utf8", func(t *testing.T) {
+		text := "héllo ex.com/a… 🚀 end"
+		start := strings.Index(text, "ex.com/a…")
+		end := start + len("ex.com/a…")
+		got := expandLinks(text, []Facet{makeFacet(start, end, "https://example.com/article")})
+		if got != "héllo https://example.com/article 🚀 end" {
+			t.Errorf("got %q", got)
+		}
+	})
 }
 
 func TestFeedEntryStats(t *testing.T) {
