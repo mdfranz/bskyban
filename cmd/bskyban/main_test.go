@@ -80,6 +80,16 @@ func TestThemeCLI(t *testing.T) {
 		// (deliberately invalid) theme check; review rejects the flag first
 		{[]string{"--pages", "2"}, 2, "unknown theme"},
 		{[]string{"review", "--pages", "2"}, 2, "flag provided but not defined"},
+		// CLI subcommand validation runs before reading credentials or logging in
+		{[]string{"nope"}, 2, `unknown command "nope"`},
+		{[]string{"show"}, 2, "show takes exactly one handle or DID"},
+		{[]string{"block"}, 2, "block needs at least one handle or DID"},
+		{[]string{"block", "--bogus", "a.bsky.social"}, 2, "flag provided but not defined"},
+		{[]string{"post"}, 2, "post needs some text"},
+		{[]string{"delete-post"}, 2, "delete-post needs at least one post"},
+		{[]string{"like"}, 2, "like needs at least one post"},
+		{[]string{"list", "--bogus"}, 2, "flag provided but not defined"},
+		{[]string{"baseline", "extra"}, 2, "baseline takes no arguments"},
 	} {
 		cmd := exec.Command(os.Args[0], append([]string{"-test.run=^TestThemeCLI$", "--"}, tc.args...)...)
 		out, err := cmd.CombinedOutput()
