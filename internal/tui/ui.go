@@ -38,6 +38,7 @@ type (
 		err  error
 	}
 	followingMsg struct {
+		reqID  uint64
 		items  []bsky.FeedItem
 		cursor string
 		err    error
@@ -45,20 +46,23 @@ type (
 	refreshTickMsg struct{}
 	animTickMsg    struct{} // redraw while a new-post highlight fades (fancy mode)
 	newItemsMsg    struct {
+		reqID  uint64
 		items  []bsky.FeedItem // newest first, none of them already shown or pending
 		gap    bool            // more new posts than one check looks at
 		manual bool
 		err    error
 	}
 	profileMsg struct {
-		p   *bsky.Profile
-		did string
-		err error
+		p     *bsky.Profile
+		did   string
+		err   error
+		reqID uint64
 	}
 	postsMsg struct {
 		did   string
 		posts []bsky.Post
 		err   error
+		reqID uint64
 	}
 	postedMsg struct {
 		text   string
@@ -138,19 +142,26 @@ type model struct {
 	pending  *actMsg             // remote action completed, local save needs retrying
 	reposted map[string]struct{} // successful reposts by post URI during this session
 
-	spin     spinner.Model
-	spinOn   bool                // a spinner tick is scheduled
-	clips    map[clipKey]clipped // wrapped list text, by item and width
-	profiles map[string]*bsky.Profile
-	posts    map[string]*[]bsky.Post // nil value = in flight
-	records  map[string]string       // block/follow records behind current decisions (this session)
-	history  []undoEntry
-	confirm  string // action awaiting confirmation
-	scroll   int    // right-panel scroll offset
-	status   string
-	err      error
-	width    int
-	height   int
+	spin          spinner.Model
+	spinOn        bool                // a spinner tick is scheduled
+	clips         map[clipKey]clipped // wrapped list text, by item and width
+	profiles      map[string]*bsky.Profile
+	posts         map[string]*[]bsky.Post // nil value = in flight
+	profileReqIDs map[string]uint64
+	postsReqIDs   map[string]uint64
+	checkID       uint64
+	tlReqID       uint64
+	reqSeq        *uint64
+	readCtx       context.Context
+	cancelReads   context.CancelFunc
+	records       map[string]string // block/follow records behind current decisions (this session)
+	history       []undoEntry
+	confirm       string // action awaiting confirmation
+	scroll        int    // right-panel scroll offset
+	status        string
+	err           error
+	width         int
+	height        int
 }
 
 // loadFunc returns the candidates to review, plus optional per-candidate context.
@@ -166,12 +177,20 @@ func newModel(a *app.App, title string, load loadFunc) model {
 	if title == "review" {
 		label = "New followers"
 	}
+	readCtx, cancelReads := context.WithCancel(context.Background())
 	return model{
 		a: a, title: title, candLabel: label, loader: load, loading: true, spin: sp, spinOn: true, // Init ticks
-		clips:    map[clipKey]clipped{},
-		tabs:     []tabID{tabCandidates},
-		profiles: map[string]*bsky.Profile{}, posts: map[string]*[]bsky.Post{}, records: map[string]string{},
-		fresh: map[string]time.Time{}, now: time.Now,
+		clips:         map[clipKey]clipped{},
+		tabs:          []tabID{tabCandidates},
+		profiles:      map[string]*bsky.Profile{},
+		posts:         map[string]*[]bsky.Post{},
+		profileReqIDs: map[string]uint64{},
+		postsReqIDs:   map[string]uint64{},
+		reqSeq:        new(uint64),
+		readCtx:       readCtx,
+		cancelReads:   cancelReads,
+		records:       map[string]string{},
+		fresh:         map[string]time.Time{}, now: time.Now,
 	}
 }
 
@@ -179,6 +198,9 @@ func newModel(a *app.App, title string, load loadFunc) model {
 func newFeedModel(a *app.App, load loadFunc, tl timelineFunc) model {
 	m := newModel(a, "feed", load)
 	m.timeline = tl
+	if tl != nil {
+		m.tlReqID = m.nextReqID()
+	}
 	m.tabs = []tabID{tabFollowing, tabCandidates}
 	m.followLoading = true
 	m.input = textinput.New()
@@ -211,32 +233,56 @@ func runTUI(m model) error {
 
 func (m model) active() tabID { return m.tabs[m.tab] }
 
+func (m model) readContext() context.Context {
+	if m.readCtx != nil {
+		return m.readCtx
+	}
+	return context.Background()
+}
+
+func (m model) nextReqID() uint64 {
+	if m.reqSeq == nil {
+		return 0
+	}
+	*m.reqSeq++
+	return *m.reqSeq
+}
+
 func (m model) Init() tea.Cmd {
+	ctx := m.readContext()
 	cmds := []tea.Cmd{m.spin.Tick, func() tea.Msg {
-		l, ctxs, err := m.loader(context.Background())
+		l, ctxs, err := m.loader(ctx)
 		return loadedMsg{l, ctxs, err}
 	}}
 	if m.timeline != nil {
-		cmds = append(cmds, loadTimeline(m.timeline, ""), m.nextTick())
+		cmds = append(cmds, loadTimeline(ctx, m.timeline, "", m.tlReqID), m.nextTick())
 	}
 	return tea.Batch(cmds...)
 }
 
 func (m model) fetchProfile(did string) tea.Cmd {
 	var cmds []tea.Cmd
-	c := m.a.Client
+	c, ctx := m.a.Client, m.readContext()
 	if _, ok := m.profiles[did]; !ok {
 		m.profiles[did] = nil // mark in flight
+		id := m.nextReqID()
+		if m.profileReqIDs != nil {
+			m.profileReqIDs[did] = id
+		}
 		cmds = append(cmds, func() tea.Msg {
-			p, err := c.GetProfile(context.Background(), did)
-			return profileMsg{p, did, err}
+			p, err := c.GetProfile(ctx, did)
+			return profileMsg{p: p, did: did, err: err, reqID: id}
 		})
 	}
 	if _, ok := m.posts[did]; !ok {
 		m.posts[did] = nil // mark in flight
+		id := m.nextReqID()
+		if m.postsReqIDs != nil {
+			m.postsReqIDs[did] = id
+		}
 		cmds = append(cmds, func() tea.Msg {
-			posts, err := c.GetRecentPosts(context.Background(), did, recentPostCount)
-			return postsMsg{did, posts, err}
+			posts, err := c.GetRecentPosts(ctx, did, recentPostCount)
+			return postsMsg{did: did, posts: posts, err: err, reqID: id}
 		})
 	}
 	return tea.Batch(cmds...)
@@ -359,6 +405,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		next, check := m.startCheck(false)
 		return next, tea.Batch(m.nextTick(), check)
 	case newItemsMsg:
+		if msg.reqID != 0 && msg.reqID != m.checkID {
+			return m, nil
+		}
 		m.checking = false
 		manual := msg.manual || m.applyWhenDone
 		m.applyWhenDone = false
@@ -392,6 +441,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case followingMsg:
+		if msg.reqID != 0 && msg.reqID != m.tlReqID {
+			return m, nil
+		}
 		m.followLoading, m.moreBusy = false, false
 		if msg.err != nil {
 			m.err = msg.err
@@ -401,6 +453,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tlCursor = msg.cursor
 		return m, m.prefetch()
 	case profileMsg:
+		if msg.reqID != 0 && m.profileReqIDs[msg.did] != msg.reqID {
+			return m, nil
+		}
 		if msg.err != nil {
 			delete(m.profiles, msg.did)
 			m.err = msg.err
@@ -408,6 +463,9 @@ func (m model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.profiles[msg.did] = msg.p
 		}
 	case postsMsg:
+		if msg.reqID != 0 && m.postsReqIDs[msg.did] != msg.reqID {
+			return m, nil
+		}
 		if msg.err != nil {
 			delete(m.posts, msg.did)
 			m.err = msg.err
@@ -452,6 +510,9 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.pending != nil {
 			m.status = "decision has not been saved; press r to retry saving before quitting"
 			return m, nil
+		}
+		if m.cancelReads != nil {
+			m.cancelReads()
 		}
 		if m.busy {
 			m.quitting = true
