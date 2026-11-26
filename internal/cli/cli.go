@@ -139,15 +139,17 @@ func Validate(cmd string, args []string) error {
 	}
 }
 
-// Run executes a subcommand that needs a login and no terminal UI.
+// Run executes a subcommand that needs a login and no terminal UI. Arguments
+// are checked by Validate first, so the cmd* functions below only re-check
+// what depends on stdin.
 func (a *CLI) Run(ctx context.Context, cmd string, args []string) error {
+	if err := Validate(cmd, args); err != nil {
+		return err
+	}
 	switch cmd {
 	case "list":
 		return a.cmdList(ctx, args)
 	case "baseline":
-		if len(args) != 0 {
-			return fmt.Errorf("%w: baseline takes no arguments", ErrUsage)
-		}
 		return a.cmdBaseline(ctx)
 	case "show":
 		return a.cmdShow(ctx, args)
@@ -255,10 +257,8 @@ func (a *CLI) cmdBaseline(ctx context.Context) error {
 	return nil
 }
 
+// cmdShow expects exactly one argument; Run checks that via Validate.
 func (a *CLI) cmdShow(ctx context.Context, args []string) error {
-	if len(args) != 1 {
-		return fmt.Errorf("%w: show takes exactly one handle or DID", ErrUsage)
-	}
 	p, err := a.Client.GetProfile(ctx, normalizeActor(args[0]))
 	if err != nil {
 		return err
@@ -399,9 +399,6 @@ func (a *CLI) cmdDeletePost(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if len(rest) == 0 {
-		return fmt.Errorf("%w: delete-post needs at least one post", ErrUsage)
-	}
 	var failed int
 	for _, ref := range rest {
 		if err := a.deletePost(ctx, ref, dry); err != nil {
@@ -490,9 +487,6 @@ func (a *CLI) cmdLike(ctx context.Context, cmd string, args []string) error {
 	dry, rest, err := parseDryRun(cmd, args)
 	if err != nil {
 		return err
-	}
-	if len(rest) == 0 {
-		return fmt.Errorf("%w: %s needs at least one post", ErrUsage, cmd)
 	}
 	var failed int
 	for _, ref := range rest {
