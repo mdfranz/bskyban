@@ -96,7 +96,7 @@ func (s *State) write() error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }() // fails harmlessly once renamed
 	_, writeErr := tmp.Write(data)
 	closeErr := tmp.Close()
 	if err := errors.Join(writeErr, closeErr); err != nil {
