@@ -11,6 +11,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mdfranz/bskyban/internal/bsky"
+	"github.com/mdfranz/bskyban/internal/telemetry"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // nextTick schedules the next background check for new posts (nil if disabled).
@@ -59,12 +63,18 @@ func (m model) startCheck(manual bool) (model, tea.Cmd) {
 	}
 	tl, ctx := m.timeline, m.readContext()
 	return m, func() tea.Msg {
+		ctx, span := telemetry.Tracer().Start(ctx, "tui.refresh_check",
+			trace.WithAttributes(attribute.Bool("bskyban.manual", manual)),
+		)
+		defer span.End()
 		var fresh []bsky.FeedItem
 		got := map[string]bool{}
 		cursor := ""
 		for page := 0; page < checkPages; page++ {
 			items, next, err := tl(ctx, cursor)
 			if err != nil {
+				span.SetAttributes(attribute.String("bskyban.outcome", "error"))
+				span.SetStatus(codes.Error, "refresh check failed")
 				return newItemsMsg{reqID: reqID, err: err, manual: manual}
 			}
 			overlap := false
@@ -78,10 +88,12 @@ func (m model) startCheck(manual bool) (model, tea.Cmd) {
 				}
 			}
 			if overlap || next == "" {
+				span.SetAttributes(attribute.Int("bskyban.new_posts", len(fresh)), attribute.Bool("bskyban.gap", false), attribute.String("bskyban.outcome", "ok"))
 				return newItemsMsg{reqID: reqID, items: fresh, manual: manual}
 			}
 			cursor = next
 		}
+		span.SetAttributes(attribute.Int("bskyban.new_posts", len(fresh)), attribute.Bool("bskyban.gap", true), attribute.String("bskyban.outcome", "ok"))
 		return newItemsMsg{reqID: reqID, items: fresh, gap: true, manual: manual}
 	}
 }
@@ -162,7 +174,15 @@ func (m model) mergeCandidates(items []bsky.FeedItem) model {
 
 func loadTimeline(ctx context.Context, tl timelineFunc, cursor string, reqID uint64) tea.Cmd {
 	return func() tea.Msg {
+		ctx, span := telemetry.Tracer().Start(ctx, "tui.timeline_page")
+		defer span.End()
 		items, next, err := tl(ctx, cursor)
+		if err != nil {
+			span.SetAttributes(attribute.String("bskyban.outcome", "error"))
+			span.SetStatus(codes.Error, "timeline load failed")
+		} else {
+			span.SetAttributes(attribute.Int("bskyban.items", len(items)), attribute.String("bskyban.outcome", "ok"))
+		}
 		return followingMsg{reqID: reqID, items: items, cursor: next, err: err}
 	}
 }

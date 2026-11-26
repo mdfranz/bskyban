@@ -13,8 +13,11 @@ import (
 	"github.com/mdfranz/bskyban/internal/bsky"
 	"github.com/mdfranz/bskyban/internal/cli"
 	"github.com/mdfranz/bskyban/internal/store"
+	"github.com/mdfranz/bskyban/internal/telemetry"
 	"github.com/mdfranz/bskyban/internal/termtext"
 	"github.com/mdfranz/bskyban/internal/tui"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // minRefresh is the shortest allowed interval between background checks.
@@ -24,12 +27,21 @@ func main() {
 	os.Exit(realMain())
 }
 
-func realMain() int {
+func realMain() (exitCode int) {
 	args := os.Args[1:]
 	cmd := "feed" // what plain `bskyban` runs
 	if len(args) > 0 && args[0][0] != '-' {
 		cmd, args = args[0], args[1:]
 	}
+	tel := telemetry.Init(context.Background())
+	defer tel.Shutdown()
+	ctx, span := telemetry.Tracer().Start(context.Background(), "cli "+cmd,
+		trace.WithAttributes(attribute.String("bskyban.command", cmd)),
+	)
+	defer func() {
+		span.SetAttributes(attribute.Int("bskyban.exit_code", exitCode))
+		span.End()
+	}()
 	if cmd == "help" || (len(args) > 0 && (args[0] == "-h" || args[0] == "--help")) {
 		fmt.Print(cli.UsageText)
 		return 0
@@ -93,7 +105,6 @@ func realMain() int {
 	if err != nil {
 		return fail(err)
 	}
-	ctx := context.Background()
 	c := bsky.NewClient(pds)
 	if err := c.Login(ctx, handle, pw); err != nil {
 		return fail(fmt.Errorf("login: %w", err))
