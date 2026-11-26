@@ -73,8 +73,9 @@ func (m model) startCheck(manual bool) (model, tea.Cmd) {
 		for page := 0; page < checkPages; page++ {
 			items, next, err := tl(ctx, cursor)
 			if err != nil {
-				span.SetAttributes(attribute.String("bskyban.outcome", "error"))
-				span.SetStatus(codes.Error, "refresh check failed")
+				outcome := telemetry.ClassifyOutcome(err)
+				span.SetAttributes(attribute.String("bskyban.outcome", outcome))
+				span.SetStatus(codes.Error, outcome)
 				return newItemsMsg{reqID: reqID, err: err, manual: manual}
 			}
 			overlap := false
@@ -177,11 +178,12 @@ func loadTimeline(ctx context.Context, tl timelineFunc, cursor string, reqID uin
 		ctx, span := telemetry.Tracer().Start(ctx, "tui.timeline_page")
 		defer span.End()
 		items, next, err := tl(ctx, cursor)
+		outcome := telemetry.ClassifyOutcome(err)
 		if err != nil {
-			span.SetAttributes(attribute.String("bskyban.outcome", "error"))
-			span.SetStatus(codes.Error, "timeline load failed")
+			span.SetAttributes(attribute.String("bskyban.outcome", outcome))
+			span.SetStatus(codes.Error, outcome)
 		} else {
-			span.SetAttributes(attribute.Int("bskyban.items", len(items)), attribute.String("bskyban.outcome", "ok"))
+			span.SetAttributes(attribute.Int("bskyban.items", len(items)), attribute.String("bskyban.outcome", outcome))
 		}
 		return followingMsg{reqID: reqID, items: items, cursor: next, err: err}
 	}

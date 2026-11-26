@@ -1,13 +1,16 @@
 // Package telemetry provides optional, privacy-preserving OpenTelemetry trace
-// export to Pydantic Logfire. When LOGFIRE_TOKEN is unset or empty, no
-// exporter is configured, no network connections are made, and tracing is a
-// zero-cost no-op.
+// export (e.g. to Pydantic Logfire). Export is enabled only when both
+// OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_EXPORTER_OTLP_HEADERS are set and
+// non-empty; otherwise no exporter is configured, no network connections are
+// made, and tracing is a zero-cost no-op.
 package telemetry
 
 import (
 	"context"
-	"fmt"
+	"errors"
+	"net"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -25,19 +28,30 @@ const (
 	flushBudget = 3 * time.Second
 )
 
-// TokenPresent reports whether a Logfire write token is non-empty after trimming.
-func TokenPresent(v string) bool { return strings.TrimSpace(v) != "" }
-
-// Enabled reports whether telemetry export is requested by the environment.
+// Enabled reports whether OTLP trace export is configured in the environment.
+// Both OTEL_EXPORTER_OTLP_ENDPOINT and OTEL_EXPORTER_OTLP_HEADERS must be set.
 func Enabled() bool {
-	if !TokenPresent(os.Getenv("LOGFIRE_TOKEN")) {
-		return false
+	return strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")) != "" &&
+		strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS")) != ""
+}
+
+// ClassifyOutcome maps an error to a fixed, coarse outcome label so raw
+// server-supplied or user-identifying error text is never exported.
+func ClassifyOutcome(err error) string {
+	if err == nil {
+		return "ok"
 	}
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LOGFIRE_SEND_TO_LOGFIRE"))) {
-	case "no", "false", "0":
-		return false
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
 	}
-	return true
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return "timeout"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "canceled"
+	}
+	return "operation_failed"
 }
 
 // Tracer returns the package tracer (no-op when telemetry is not active).
@@ -62,48 +76,50 @@ func (s *Session) Shutdown() {
 	_ = s.tp.Shutdown(ctx)
 }
 
-func endpointURL(token, base string) string {
-	base = strings.TrimSpace(base)
-	if base == "" {
-		if strings.HasPrefix(token, "pylf_v1_eu_") {
-			base = "https://logfire-eu.pydantic.dev"
-		} else {
-			base = "https://logfire-us.pydantic.dev"
-		}
-	}
-	return strings.TrimRight(base, "/") + "/v1/traces"
-}
-
-// Init configures OpenTelemetry export to Logfire when Enabled() is true.
-// Configuration failures are reported once on stderr and never abort the CLI.
-func Init(ctx context.Context) *Session {
-	if !Enabled() {
-		return &Session{}
-	}
-	token := strings.TrimSpace(os.Getenv("LOGFIRE_TOKEN"))
-	exp, err := otlptracehttp.New(ctx,
-		otlptracehttp.WithEndpointURL(endpointURL(token, os.Getenv("LOGFIRE_BASE_URL"))),
-		otlptracehttp.WithHeaders(map[string]string{"Authorization": token}),
-	)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: logfire disabled: %v\n", err)
-		return &Session{}
-	}
-	svc := strings.TrimSpace(os.Getenv("LOGFIRE_SERVICE_NAME"))
+func buildResource(ctx context.Context) (*resource.Resource, error) {
+	svc := strings.TrimSpace(os.Getenv("OTEL_SERVICE_NAME"))
 	if svc == "" {
 		svc = "bskyban"
 	}
 	attrs := []attribute.KeyValue{semconv.ServiceName(svc)}
-	if env := strings.TrimSpace(os.Getenv("LOGFIRE_ENVIRONMENT")); env != "" {
-		attrs = append(attrs, semconv.DeploymentEnvironmentName(env))
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if v := strings.TrimSpace(info.Main.Version); v != "" && v != "(devel)" {
+			attrs = append(attrs, semconv.ServiceVersion(v))
+		}
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" && strings.TrimSpace(s.Value) != "" {
+				attrs = append(attrs, attribute.String("vcs.revision", s.Value))
+				break
+			}
+		}
 	}
-	res := resource.NewWithAttributes(semconv.SchemaURL, attrs...)
+	return resource.New(ctx,
+		resource.WithFromEnv(),
+		resource.WithAttributes(attrs...),
+	)
+}
+
+// Init configures OTLP/HTTP trace export from standard OpenTelemetry
+// environment variables when Enabled() is true. Callers should treat a non-nil
+// error as non-fatal and continue without telemetry.
+func Init(ctx context.Context) (*Session, error) {
+	if !Enabled() {
+		return &Session{}, nil
+	}
+	exp, err := otlptracehttp.New(ctx)
+	if err != nil {
+		return &Session{}, err
+	}
+	res, err := buildResource(ctx)
+	if err != nil {
+		return &Session{}, err
+	}
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(res),
 	)
-	// Suppress SDK export errors so an unreachable collector never draws over the TUI.
+	// Suppress background export errors so an unreachable collector never draws over the TUI.
 	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(error) {}))
 	otel.SetTracerProvider(tp)
-	return &Session{tp: tp}
+	return &Session{tp: tp}, nil
 }

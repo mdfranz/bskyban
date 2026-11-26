@@ -38,11 +38,10 @@ func (c *Client) do(ctx context.Context, method, nsid string, query url.Values, 
 		),
 	)
 	defer func() {
+		outcome := telemetry.ClassifyOutcome(retErr)
+		span.SetAttributes(attribute.String("xrpc.outcome", outcome))
 		if retErr != nil {
-			span.SetAttributes(attribute.String("xrpc.outcome", "error"))
-			span.SetStatus(codes.Error, "xrpc error")
-		} else {
-			span.SetAttributes(attribute.String("xrpc.outcome", "ok"))
+			span.SetStatus(codes.Error, outcome)
 		}
 		span.End()
 	}()
@@ -83,9 +82,7 @@ func (c *Client) do(ctx context.Context, method, nsid string, query url.Values, 
 		var e struct{ Error, Message string }
 		_ = json.Unmarshal(data, &e)
 		if e.Error != "" {
-			code := termtext.Sanitize(e.Error)
-			span.SetAttributes(attribute.String("xrpc.error_code", code))
-			return fmt.Errorf("%s: %s (%s)", nsid, termtext.Sanitize(e.Message), code)
+			return fmt.Errorf("%s: %s (%s)", nsid, termtext.Sanitize(e.Message), termtext.Sanitize(e.Error))
 		}
 		return fmt.Errorf("%s: HTTP %d", nsid, resp.StatusCode)
 	}

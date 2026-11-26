@@ -3,6 +3,7 @@ package telemetry_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,30 +14,49 @@ import (
 	"github.com/mdfranz/bskyban/internal/telemetry"
 )
 
-func TestTokenAndEnabled(t *testing.T) {
+func TestEnabled(t *testing.T) {
 	for _, tc := range []struct {
-		token, send string
-		want        bool
+		endpoint, headers string
+		want              bool
 	}{
 		{"", "", false},
-		{"  \t ", "", false},
-		{"pylf_v1_us_abc", "no", false},
-		{"pylf_v1_us_abc", "FALSE", false},
-		{"pylf_v1_us_abc", "", true},
+		{"https://logfire-us.pydantic.dev", "", false},
+		{"", "Authorization=tok", false},
+		{"  \t ", "Authorization=tok", false},
+		{"https://logfire-us.pydantic.dev", "Authorization=tok", true},
 	} {
-		t.Setenv("LOGFIRE_TOKEN", tc.token)
-		t.Setenv("LOGFIRE_SEND_TO_LOGFIRE", tc.send)
+		t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", tc.endpoint)
+		t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", tc.headers)
 		if got := telemetry.Enabled(); got != tc.want {
-			t.Errorf("token=%q send=%q: got %v, want %v", tc.token, tc.send, got, tc.want)
+			t.Errorf("endpoint=%q headers=%q: got %v, want %v", tc.endpoint, tc.headers, got, tc.want)
 		}
 	}
 }
 
+func TestClassifyOutcome(t *testing.T) {
+	if got := telemetry.ClassifyOutcome(nil); got != "ok" {
+		t.Errorf("nil = %q", got)
+	}
+	if got := telemetry.ClassifyOutcome(context.DeadlineExceeded); got != "timeout" {
+		t.Errorf("deadline = %q", got)
+	}
+	if got := telemetry.ClassifyOutcome(context.Canceled); got != "canceled" {
+		t.Errorf("canceled = %q", got)
+	}
+	if got := telemetry.ClassifyOutcome(errors.New("boom")); got != "operation_failed" {
+		t.Errorf("other = %q", got)
+	}
+}
+
 func TestDisabledSessionIsInert(t *testing.T) {
-	t.Setenv("LOGFIRE_TOKEN", "")
-	s := telemetry.Init(context.Background())
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "")
+	s, err := telemetry.Init(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if s.Active() {
-		t.Fatal("expected inactive session when LOGFIRE_TOKEN is empty")
+		t.Fatal("expected inactive session when OTLP env vars are unset")
 	}
 	s.Shutdown()
 }
@@ -55,12 +75,15 @@ func TestExportedSpansScrubSensitiveData(t *testing.T) {
 	}))
 	t.Cleanup(collector.Close)
 
-	t.Setenv("LOGFIRE_TOKEN", "pylf_v1_us_testtoken")
-	t.Setenv("LOGFIRE_SEND_TO_LOGFIRE", "")
-	t.Setenv("LOGFIRE_BASE_URL", collector.URL)
-	t.Setenv("LOGFIRE_ENVIRONMENT", "test")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", collector.URL)
+	t.Setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=pylf_v1_us_testtoken")
+	t.Setenv("OTEL_SERVICE_NAME", "bskyban-test")
+	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment.name=test")
 
-	s := telemetry.Init(context.Background())
+	s, err := telemetry.Init(context.Background())
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
 	if !s.Active() {
 		t.Fatal("expected active telemetry session")
 	}
@@ -70,6 +93,7 @@ func TestExportedSpansScrubSensitiveData(t *testing.T) {
 		secretDID      = "did:plc:secret12345"
 		secretPassword = "super-secret-app-password"
 		secretJWT      = "super-secret-jwt-token"
+		secretErrCode  = "SecretServerErrorCode"
 		secretErrMsg   = "bad handle alice.secret.example for did:plc:secret12345"
 	)
 
@@ -79,7 +103,7 @@ func TestExportedSpansScrubSensitiveData(t *testing.T) {
 			_, _ = io.WriteString(w, `{"accessJwt":"`+secretJWT+`","did":"`+secretDID+`","handle":"`+secretHandle+`"}`)
 		case "/xrpc/app.bsky.actor.getProfile":
 			w.WriteHeader(http.StatusBadRequest)
-			_, _ = io.WriteString(w, `{"error":"InvalidRequest","message":"`+secretErrMsg+`"}`)
+			_, _ = io.WriteString(w, `{"error":"`+secretErrCode+`","message":"`+secretErrMsg+`"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -106,8 +130,9 @@ func TestExportedSpansScrubSensitiveData(t *testing.T) {
 	for _, want := range []string{
 		"com.atproto.server.createSession",
 		"app.bsky.actor.getProfile",
-		"InvalidRequest",
+		"operation_failed",
 		"xrpc.outcome",
+		"bskyban-test",
 	} {
 		if !bytes.Contains(payload, []byte(want)) {
 			t.Errorf("exported payload missing expected %q", want)
@@ -118,6 +143,7 @@ func TestExportedSpansScrubSensitiveData(t *testing.T) {
 		secretDID,
 		secretPassword,
 		secretJWT,
+		secretErrCode,
 		secretErrMsg,
 		pds.URL,
 	} {

@@ -229,31 +229,29 @@ func (m model) unfollowKey(confirm string) (model, tea.Cmd) {
 		ctx, span := telemetry.Tracer().Start(context.Background(), "tui.moderation",
 			trace.WithAttributes(attribute.String("bskyban.action", "unfollow")),
 		)
-		defer span.End()
-		msg := actMsg{undo: e, isUnfollow: true}
+		var msg actMsg
+		defer func() {
+			outcome := telemetry.ClassifyOutcome(msg.err)
+			span.SetAttributes(attribute.String("bskyban.outcome", outcome))
+			if msg.err != nil {
+				span.SetStatus(codes.Error, outcome)
+			}
+			span.End()
+		}()
+		msg = actMsg{undo: e, isUnfollow: true}
 		if msg.undo.record == "" {
 			profile, err := c.GetProfile(ctx, p.DID)
 			if err != nil {
 				msg.err = err
-				span.SetAttributes(attribute.String("bskyban.outcome", "error"))
-				span.SetStatus(codes.Error, "moderation failed")
 				return msg
 			}
 			msg.undo.record = profile.Viewer.Following
 		}
 		if msg.undo.record == "" {
 			msg.err = fmt.Errorf("you do not follow @%s", p.Handle)
-			span.SetAttributes(attribute.String("bskyban.outcome", "error"))
-			span.SetStatus(codes.Error, "moderation failed")
 			return msg
 		}
 		msg.err = c.Unfollow(ctx, msg.undo.record)
-		if msg.err != nil {
-			span.SetAttributes(attribute.String("bskyban.outcome", "error"))
-			span.SetStatus(codes.Error, "moderation failed")
-		} else {
-			span.SetAttributes(attribute.String("bskyban.outcome", "ok"))
-		}
 		return msg
 	}
 }
@@ -301,23 +299,27 @@ func (m model) decide(p bsky.Profile, decision string) (model, tea.Cmd) {
 		ctx, span := telemetry.Tracer().Start(context.Background(), "tui.moderation",
 			trace.WithAttributes(attribute.String("bskyban.action", decisionAction[decision])),
 		)
-		defer span.End()
-		msg := actMsg{undo: e}
+		var msg actMsg
+		defer func() {
+			outcome := telemetry.ClassifyOutcome(msg.err)
+			span.SetAttributes(attribute.String("bskyban.outcome", outcome))
+			if msg.err != nil {
+				span.SetStatus(codes.Error, outcome)
+			}
+			span.End()
+		}()
+		msg = actMsg{undo: e}
 		if lift { // e.g. keep/skip on a blocked account lifts the block
 			if known == "" {
 				fp, err := c.GetProfile(ctx, p.DID)
 				if err != nil {
 					msg.err = err
-					span.SetAttributes(attribute.String("bskyban.outcome", "error"))
-					span.SetStatus(codes.Error, "moderation failed")
 					return msg
 				}
 				known = app.ViewerURI(fp, prev.Decision)
 			}
 			if known != "" {
 				if msg.err = app.DeleteFor(ctx, c, prev.Decision, known); msg.err != nil {
-					span.SetAttributes(attribute.String("bskyban.outcome", "error"))
-					span.SetStatus(codes.Error, "moderation failed")
 					return msg
 				}
 				msg.lifted = true
@@ -325,12 +327,6 @@ func (m model) decide(p bsky.Profile, decision string) (model, tea.Cmd) {
 		}
 		if app.IsRemote(decision) {
 			msg.newURI, msg.err = app.CreateFor(ctx, c, decision, p.DID)
-		}
-		if msg.err != nil {
-			span.SetAttributes(attribute.String("bskyban.outcome", "error"))
-			span.SetStatus(codes.Error, "moderation failed")
-		} else {
-			span.SetAttributes(attribute.String("bskyban.outcome", "ok"))
 		}
 		return msg
 	}
@@ -357,19 +353,21 @@ func (m model) undo() (model, tea.Cmd) {
 		ctx, span := telemetry.Tracer().Start(context.Background(), "tui.moderation",
 			trace.WithAttributes(attribute.String("bskyban.action", "undo")),
 		)
-		defer span.End()
-		msg := actMsg{undo: e, isUndo: true}
+		var msg actMsg
+		defer func() {
+			outcome := telemetry.ClassifyOutcome(msg.err)
+			span.SetAttributes(attribute.String("bskyban.outcome", outcome))
+			if msg.err != nil {
+				span.SetStatus(codes.Error, outcome)
+			}
+			span.End()
+		}()
+		msg = actMsg{undo: e, isUndo: true}
 		if app.IsRemote(e.decision) && e.record != "" {
 			msg.err = app.DeleteFor(ctx, c, e.decision, e.record)
 		}
 		if msg.err == nil && e.prev != nil && app.IsRemote(e.prev.Decision) && e.prev.Decision != e.decision {
 			msg.newURI, msg.err = app.CreateFor(ctx, c, e.prev.Decision, e.profile.DID) // restore what we lifted
-		}
-		if msg.err != nil {
-			span.SetAttributes(attribute.String("bskyban.outcome", "error"))
-			span.SetStatus(codes.Error, "moderation failed")
-		} else {
-			span.SetAttributes(attribute.String("bskyban.outcome", "ok"))
 		}
 		return msg
 	}

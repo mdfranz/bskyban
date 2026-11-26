@@ -33,7 +33,10 @@ func realMain() (exitCode int) {
 	if len(args) > 0 && args[0][0] != '-' {
 		cmd, args = args[0], args[1:]
 	}
-	tel := telemetry.Init(context.Background())
+	tel, telErr := telemetry.Init(context.Background())
+	if telErr != nil {
+		fmt.Fprintln(os.Stderr, "warning: telemetry disabled (setup failed)")
+	}
 	defer tel.Shutdown()
 	ctx, span := telemetry.Tracer().Start(context.Background(), "cli "+cmd,
 		trace.WithAttributes(attribute.String("bskyban.command", cmd)),
